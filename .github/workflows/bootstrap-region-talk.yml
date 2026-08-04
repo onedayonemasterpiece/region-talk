@@ -38,7 +38,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p /tmp/region-talk-preserve/research
+          cp SETUP.md /tmp/region-talk-preserve/SETUP.md
+          cp CODE_AGENT_SETTINGS_PROMPT.md /tmp/region-talk-preserve/CODE_AGENT_SETTINGS_PROMPT.md
+          cp research/REGION_TALK_RESEARCH_INTAKE_PROMPT_V3.md /tmp/region-talk-preserve/research/
+
           rsync -a --delete --exclude '.git' /tmp/region-talk-bootstrap/ "$GITHUB_WORKSPACE/"
+
+          cp /tmp/region-talk-preserve/SETUP.md SETUP.md
+          cp /tmp/region-talk-preserve/CODE_AGENT_SETTINGS_PROMPT.md CODE_AGENT_SETTINGS_PROMPT.md
+          mkdir -p research
+          cp /tmp/region-talk-preserve/research/REGION_TALK_RESEARCH_INTAKE_PROMPT_V3.md research/
+
           git config user.name 'region-talk-bootstrap'
           git config user.email 'region-talk-bootstrap@users.noreply.github.com'
           git add -A
