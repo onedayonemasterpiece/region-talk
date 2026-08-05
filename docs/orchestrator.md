@@ -4,20 +4,20 @@
 
 Оркестратор — короткий GitHub Actions controller, а не долгоживущий polling process и не Kaggle notebook.
 
-Default schedule:
+Default schedule после отладки:
 
 ```yaml
 schedule:
   - cron: '7,22,37,52 * * * *'
 ```
 
-То есть один catch-up tick каждые 15 минут, со смещением от начала часа. Дополнительно:
+Один catch-up tick каждые 15 минут, со смещением от начала часа. Дополнительно:
 
 - `workflow_dispatch` для ручного анализа/ускорения;
 - bounded self-dispatch после terminal reconciliation, максимум четыре hop подряд;
-- `repository_dispatch` для trusted research intake или operator command при необходимости.
+- trusted research intake после merge JSON в `main`.
 
-## 2. Concurrency
+## 2. Единственный controller без новой БД
 
 ```yaml
 concurrency:
@@ -25,13 +25,34 @@ concurrency:
   cancel-in-progress: false
 ```
 
-Controller также берёт compact lease через `region_talk_control.claim_controller`. GitHub concurrency защищает от одновременных workflow, Supabase lease — от ручного/повторного запуска и stale attempt.
+Для первого рабочего контура этого достаточно вместе с optimistic state commit:
 
-Никакой job не должен ждать Kaggle 20–90 минут. Controller запускает kernel, записывает attempt и завершается. Следующий tick проверяет статус.
+1. controller читает exact current state dataset version и SHA;
+2. планирует attempt относительно этого base;
+3. reconciler применяет delta только если current HEAD всё ещё равен base;
+4. stale-base delta архивируется и не меняет state;
+5. новая Kaggle Dataset version публикуется только после SQLite invariants/readback.
 
-## 3. State machine
+Отдельный Supabase controller lease не требуется. Он может быть добавлен позже только при появлении второго реально независимого controller.
 
-### 3.1. Системные стадии
+Никакая GitHub job не ждёт Kaggle 20–90 минут. Controller запускает kernel и завершается; следующий tick проверяет статус.
+
+## 3. Имена assets выводятся, а не вводятся вручную
+
+При `KAGGLE_USERNAME=<owner>`:
+
+```text
+state dataset      = <owner>/region-talk-state
+run history        = <owner>/region-talk-run-history
+candidate kernel   = <owner>/region-talk-candidate-e5
+bge kernel         = <owner>/region-talk-bge-m3
+image kernel       = <owner>/region-talk-image-diagnostic
+profile kernel     = <owner>/region-talk-source-profile
+```
+
+Runtime variables нужны только как optional override, не как обязательные настройки. Model revisions закрепляются в versioned config.
+
+## 4. State machine
 
 ```text
 IDLE
@@ -49,10 +70,10 @@ PUBLISH_READY
 DEGRADED / BLOCKED
 ```
 
-### 3.2. Priority order per tick
+## 5. Priority order per tick
 
 1. Reconcile every terminal Kaggle output.
-2. Recover incomplete state/run archive commits.
+2. Recover incomplete archive/state readback.
 3. Sync exact operator reactions.
 4. Finalize due publication outbox attempts.
 5. Publish a due, approved, current revision.
@@ -63,50 +84,46 @@ DEGRADED / BLOCKED
 10. Fuse newly available E5+BGE pairs.
 11. Run BGE for missing current pairs.
 12. Run Candidate/E5 for exact links, research intake and high-priority queue.
-13. Only then expand generic source discovery.
+13. Only then expand generic discovery.
 
-This order intentionally optimizes candidates delivered to the operator, not the number of discovered rows.
+Это оптимизирует число готовых публикаций, а не число найденных строк.
 
-## 4. Action selection
+## 6. Action selection
 
-Controller reads one compact Supabase RPC response:
+Controller читает:
 
-```json
-{
-  "controller_lease": {},
-  "active_attempts": [],
-  "queue_counts": {},
-  "due_publications": 0,
-  "unsent_review_revisions": 0,
-  "state_head": {"version": 17, "sha256": "..."}
-}
-```
+- latest private state manifest;
+- active/terminal Kaggle kernel statuses;
+- append-only attempt rows из SQLite snapshot;
+- current queue/product counters;
+- Telegram review/publication evidence для due actions.
 
-Then it chooses at most:
+Затем выбирает:
 
-- all safe local/reconciliation actions;
-- one new Kaggle stage per auth/resource scope;
-- one publication attempt per target/idempotency key;
-- a bounded self-dispatch when immediate work remains.
+- все безопасные local/reconciliation actions;
+- не более одного нового Kaggle stage на один auth/resource scope;
+- не более одной publication attempt на target/idempotency key;
+- bounded self-dispatch, если immediate work осталось.
 
-## 5. Parallelism
+Existing Supabase используется только при реальном Google provider admission через canonical limiter.
 
-Allowed:
+## 7. Parallelism
 
-- Candidate/E5 with DISCOVERY1 and ImageDiagnostic with DISCOVERY2, if exact auth scopes differ;
-- BGE with any Telegram stage, because BGE has no Telegram credentials;
-- local reaction sync only when its Telegram role is not active in Kaggle;
-- local finalizer with BGE/Image if it only reads committed state/projections.
+Разрешено:
 
-Forbidden:
+- Candidate/E5 с DISCOVERY1 одновременно с ImageDiagnostic на DISCOVERY2;
+- BGE с любым Telegram stage;
+- local finalizer с BGE/Image, если он читает только committed state.
 
-- two kernels with the same Telegram auth bundle;
-- two state reconcilers;
-- state commit while another reconciler has a live lease;
-- reusing a candidate delta against a different base version;
-- publisher and notifier mutating the same revision concurrently.
+Запрещено:
 
-## 6. Kernel attempt lifecycle
+- два kernels с одним Telegram auth bundle;
+- два reconcilers;
+- commit delta к другому base version;
+- publisher и notifier, меняющие одну revision одновременно;
+- BGE worker с Telegram/Google secrets.
+
+## 8. Kernel attempt lifecycle
 
 ```text
 planned
@@ -117,46 +134,32 @@ planned
 → archive_verified
 → reconciled
 → state_readback_verified
-→ projection_updated
 → complete
 ```
 
-Terminal failure states are classified:
+Ошибки классифицируются как platform, worker, timeout, output missing, schema invalid, secret scan, stale base, invariant, state publish или readback. Semantic/invariant failures не ретраятся вслепую.
 
-- `platform_failed`;
-- `worker_exception`;
-- `timeout`;
-- `output_missing`;
-- `schema_invalid`;
-- `secret_scan_failed`;
-- `stale_base`;
-- `invariant_failed`;
-- `state_publish_failed`;
-- `readback_failed`.
+## 9. Почти непрерывная, но экономная работа
 
-Each class has a bounded retry policy. A semantic/invariant failure is never retried blindly.
+- Heavy work выполняется на Kaggle CPU.
+- GitHub jobs короткие и не poll/sleep.
+- Пропущенный cron увеличивает latency, но не теряет durable work.
+- После завершения stage следующий tick запускает successor; bounded self-dispatch сокращает разрыв.
+- Discovery batch уменьшается при downstream backlog.
+- Каждый stage имеет per-run/per-day budgets.
 
-## 7. Nearly continuous but economical operation
+## 10. Manual modes
 
-- Heavy work is in Kaggle CPU.
-- GitHub jobs are short and do not sleep/poll.
-- Fifteen-minute ticks are enough because heavy stages usually last longer than one tick.
-- When a stage finishes, the next controller starts the successor within one tick; bounded self-dispatch can reduce the gap.
-- Idle ticks perform one compact status read and exit.
-- Discovery batch size adapts downward when downstream backlog exists.
-- No catch-up loop can generate unbounded API calls; every stage has per-run and per-day budgets.
+```text
+tick
+health
+analyze
+research_import
+replay_stage
+force_candidate
+pause
+resume
+publish_canary
+```
 
-## 8. Manual operations
-
-`workflow_dispatch` modes:
-
-- `tick` — ordinary state-machine step;
-- `health` — no mutation, full status report;
-- `analyze` — build diagnostic report from selected time window;
-- `research_import` — validate a committed JSON path;
-- `replay_stage` — exact run/stage, requires operator environment approval;
-- `force_candidate` — prioritize a canonical URL without bypassing gates;
-- `pause` / `resume` — change controller state only;
-- `publish_canary` — one exact approved revision to configured canary target.
-
-Every mutation mode writes an immutable operator action event.
+`publish_canary` требует exact approved revision и отдельного feature gate. Отсутствие платного GitHub required-reviewer rule компенсируется fail-closed application gate, а не автоматическим включением publisher.
