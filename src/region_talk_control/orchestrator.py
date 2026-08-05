@@ -1,8 +1,9 @@
 """Pure, deterministic Region Talk action selection.
 
-The production controller should translate remote Supabase/Kaggle state into
-``ControlSnapshot`` and execute returned actions. This module deliberately has
-no network calls so the orchestration policy can be exhaustively tested.
+The production controller translates the current Kaggle/SQLite state manifest,
+Kaggle attempt statuses and Telegram review evidence into ``ControlSnapshot``
+and executes returned actions. This module deliberately has no network calls so
+the orchestration policy can be exhaustively tested.
 """
 from __future__ import annotations
 
