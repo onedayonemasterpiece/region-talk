@@ -1,174 +1,150 @@
-# Задача кодовому агенту: довести Region Talk до первого полного CPU-прогона
+# Оставшаяся реализация Region Talk
 
-Репозиторий: `onedayonemasterpiece/region-talk`.
+## Главный принцип
 
-## Цель
+Не проектировать Kaggle-контур заново. Использовать pinned рабочую реализацию из `onedayonemasterpiece/events-bot-new` по:
 
-Не перепроектировать Region Talk, а перенести доказанную реализацию из `events-bot-new` на новый backend:
+- `config/kaggle-runtime-source.yml`;
+- `docs/kaggle-runtime-reuse.md`.
 
-```text
-private Kaggle CPU workers
-→ immutable deltas/logs
-→ GitHub Actions reconciler
-→ versioned SQLite state in private Kaggle Dataset
-→ Telegram review queue
-```
+Нельзя создавать второй `KaggleClient`, новый transport секретов, отдельный polling framework или новый remote-session guard. Любое отклонение требует конкретного воспроизводимого дефекта существующего контура и regression test.
 
-## Обязательные инварианты
+Не создавать GitHub issues.
 
-- Candidate/E5 и BGE-M3 — отдельные CPU kernels.
-- Workers не меняют canonical state напрямую.
-- Один GitHub reconciler применяет delta к exact base version.
-- Existing Supabase Google AI limiter остаётся единственным limiter; local fallback запрещён.
-- Scheduler и publisher выключены до полного ручного run и анализа.
-- Review bind — exact text + source URL + ordered media fingerprint.
-- Все Kaggle assets private; output проходит secret scan.
+## 1. Перенос доказанного runtime
 
-## 1. Переиспользовать текущую реализацию
+От exact source blobs адаптировать в один compatibility package:
 
-Перенести с provenance только необходимые Region Talk code/tests/docs из `events-bot-new`:
+- generic части `video_announce/kaggle_client.py`;
+- host ledger/instrumentation из `kaggle_status.py`;
+- active-job semantics из `kaggle_registry.py`;
+- auth-scope guard из `remote_telegram_session.py`.
 
-- CandidateReport/E5 launcher и worker;
-- отдельный BGE-M3 worker;
-- ImageDiagnostic;
-- source-profile capture;
-- finalizer/Writer;
-- notifier/reaction sync/planner/publisher;
-- research importer;
-- focused Region Talk tests/fixtures;
-- нужный `google_ai` limiter client.
+Worker-side `kaggle_status_client.py` уже перенесён буквально с provenance.
 
-Не переносить `.env`, sessions, DB files, artifacts или unrelated bot runtime.
+Сохранить поведение Telegram Monitoring и CherryFlash:
 
-## 2. Kaggle authentication и runtime secrets
+- private temporary datasets;
+- create/version/delete fallback;
+- dataset `ready` + exact file readback;
+- kernel staging/push;
+- exact dataset-source binding readback;
+- durable attempt/run ID;
+- heartbeat и terminal events;
+- bounded transient retries;
+- fresh-output recovery при неоднозначном status API;
+- output download retries;
+- cleanup + recovery receipt;
+- Telegram auth-scope conflict guard;
+- persisted retry budgets.
 
-Поддержать один из вариантов:
+Удалить только доменные зависимости Video/Event. Все intentional diffs перечислить в provenance document и покрыть тестами.
 
-```text
-KAGGLE_API_TOKEN
-```
+## 2. Region Talk state
 
-или существующий:
+- Каноническое состояние — SQLite snapshot в private `zigomaro/region-talk-state`.
+- Run history — private `zigomaro/region-talk-run-history`.
+- Workers не меняют canonical state: они возвращают immutable deltas и полный run bundle.
+- Reconciler проверяет base version/SHA, применяет delta в `BEGIN IMMEDIATE`, выполняет integrity/invariant checks, публикует новую dataset version и делает независимый readback.
+- Exact replay — no-op; stale base — zero writes.
 
-```text
-KAGGLE_USERNAME + KAGGLE_KEY
-```
+## 3. Отдельные CPU workers
 
-Не требовать новый token, если legacy API smoke проходит.
+Создать private CPU-only kernels:
 
-Переиспользовать действующий private ephemeral dataset transport из `events-bot-new`:
+- `zigomaro/region-talk-candidate-e5`;
+- `zigomaro/region-talk-bge-m3`;
+- `zigomaro/region-talk-image-diagnostic`;
+- `zigomaro/region-talk-source-profile` при подтверждённой необходимости отдельной стадии.
 
-- unique dataset per stage/run;
-- минимальный stage-scoped secret allowlist;
-- Fernet payload/key в одной private version;
-- delete after terminal run + TTL GC;
-- BGE получает zero external secrets;
-- output secret scan.
+E5 и BGE-M3 запрещено загружать в один production kernel.
 
-Не вводить sealed-box key pair или обязательный Kaggle User Secret.
+Scopes:
 
-Dataset/kernel refs выводить из `KAGGLE_USERNAME`; exact model revisions закрепить в repository config.
-
-## 3. SQLite state и reconciler
-
-Реализовать:
-
-- load exact state version/SHA;
-- immutable worker delta schemas;
-- `BEGIN IMMEDIATE` apply;
-- exact replay = zero writes;
-- stale base = zero writes;
-- invariants + `integrity_check` + `foreign_key_check`;
-- clean SQLite snapshot;
-- private Kaggle Dataset version upload/readback;
-- complete run bundle archive и locators в state.
-
-GitHub Actions concurrency обеспечивает одного controller/reconciler. Новая Supabase control schema в первой версии не нужна.
+- Candidate/E5 и Profile: `telegram:discovery1`;
+- Image: `telegram:discovery2`;
+- BGE: без Telegram/Google/publisher credentials.
 
 ## 4. Research intake
 
-После merge файла:
+После merge файла `research/intake/region-talk-external-research-result-<request_id>.json`:
+
+1. проверить schema и identity conflicts;
+2. импортировать exact trusted bytes в SQLite через reconciler;
+3. повторный import сделать no-op;
+4. любой конфликт должен блокировать весь пакет;
+5. retained rows начать как `unreviewed/not_granted`;
+6. отправить их в обычный E5 → BGE → fusion → image/profile → finalizer pipeline.
+
+Исследование не может сразу согласовать или опубликовать материал.
+
+## 5. Orchestrator
+
+GitHub Actions выполняет короткий catch-up tick и выходит. Никакого long polling.
+
+Приоритет:
+
+1. terminal output/archive/reconcile recovery;
+2. reaction/outbox/publication safety;
+3. отправка готовых revisions в review chat;
+4. finalizer/profile/image/fusion;
+5. missing BGE;
+6. exact research/manual links;
+7. широкое discovery.
+
+Пока ручной полный pipeline и анализ P0/P1 не завершены:
 
 ```text
-research/intake/region-talk-external-research-result-*.json
+REGION_TALK_ORCHESTRATOR_ENABLED=0
 ```
 
-GitHub reconciler должен:
+## 6. Логи и диагностика
 
-- проверить schema/semantics/exact SHA;
-- применить all-or-nothing identity import в SQLite;
-- exact replay сделать no-op;
-- conflict записать как blocked без частичного импорта;
-- отправить retained candidates в обычный E5 → BGE → image/profile → finalizer funnel;
-- не выдавать publication permission.
+Для каждого run сохранить:
 
-## 5. Одноразовая YDB migration
+- Git SHA, kernel version, input dataset versions, base state SHA;
+- stdout/stderr;
+- `kaggle_status_events.jsonl`;
+- run/stage manifest;
+- resource samples;
+- provider usage без секретов;
+- delta, metrics, exception и checksums;
+- secret scan result.
 
-- endpoint/database взять из versioned migration contract;
-- использовать один temporary read-only credential в `region-talk-migration`;
-- bounded ordered export;
-- row counts и hashes;
-- explicit kind mapping в SQLite;
-- unmapped rows сохранить;
-- три shadow comparison;
-- credential удалить после export;
+GitHub Actions должен скачивать output и для failed kernels. Raw run bundle архивируется до reconciliation.
+
+## 7. YDB migration
+
+- Только bounded read-only export.
+- Endpoint/database брать из versioned migration contract; требуется временный read-only credential.
+- Учесть 100% строк, unknown kinds сохранить отдельно.
+- Сверить counts и ordered hashes.
+- Выполнить минимум три shadow comparison.
 - YDB не удалять без отдельного решения владельца.
 
-## 6. Review и публикация
+## 8. Review и publisher
 
-Переиспользовать существующий `TELEGRAM_BOT_TOKEN`, reviewer IDs и `@kalinigrad_visit`.
+- `👍/❤️` — approve exact revision;
+- `👎` — reject;
+- `✍` — rewrite requested;
+- positive+negative — conflict;
+- только allowlisted Telegram user IDs;
+- любое изменение текста/URL/media/order/policy создаёт новый fingerprint.
 
-Не требовать вручную target numeric ID: разрешить его по username, проверить identity и сохранить в state.
+Publisher: outbox, exact media hash, target identity readback, schedule/diversity rules, ambiguous-timeout history check. Сначала render-only и private canary; production publishing остаётся выключенным до отдельного утверждения.
 
-Сохранить реакции:
+## 9. Проверка
 
-```text
-👍/❤️ approve
-👎 reject
-✍ rewrite
-positive + negative = conflict
-```
+До scheduler enable выполнить:
 
-Publisher: outbox, exact current approval, schedule/diversity, exact media hashes, ambiguous-timeout readback и idempotency key. Сначала private-channel canary; production gate остаётся `0`.
+1. repository/unit tests;
+2. private dataset create/version/readback/delete canary через proven runtime;
+3. fixture state/reconciler cycle;
+4. отдельные E5 и BGE CPU smoke;
+5. Image/Profile smoke;
+6. YDB migration + shadow;
+7. полный ручной pipeline;
+8. продуктовый анализ: сколько кандидатов дошло до review-ready/published-ready и причины потерь;
+9. исправление всех P0/P1 с regression tests.
 
-## 7. Первый полный прогон
-
-Последовательность:
-
-1. authenticated Kaggle read-only smoke;
-2. state/reconciler fixture cycle;
-3. отдельные Candidate/E5 и BGE CPU smoke runs;
-4. Image/Profile smoke;
-5. YDB migration dry/apply/readback;
-6. полный ручной funnel до review candidate;
-7. скачать и проанализировать все run bundles;
-8. посчитать product funnel из `docs/product-metrics.md`;
-9. исправить P0/P1 и добавить regressions;
-10. только после этого предложить включение регулярного controller.
-
-## Внешние значения, которые нельзя выдумывать
-
-Сейчас:
-
-```text
-KAGGLE_KEY или KAGGLE_API_TOKEN
-```
-
-Позже для review:
-
-```text
-TELEGRAM_BOT_TOKEN
-REGION_TALK_REVIEW_CHAT_ID
-```
-
-Только для migration:
-
-```text
-REGION_TALK_YDB_READONLY_CREDENTIAL
-```
-
-Все остальные asset names/IDs/revisions должны быть выведены или закреплены в коде.
-
-## Результат
-
-Вернуть branch/PR, commits, tests, workflow/Kaggle run IDs, state versions/hashes, migration reconciliation, первый product-funnel report и точный список оставшихся блокеров. Не включать scheduler/publisher автоматически.
+Финальный отчёт должен содержать exact commit SHA, Actions/Kaggle run IDs, dataset/kernel versions, state SHA, queue/product metrics и оставшиеся внешние blockers. Не считать зелёные jobs продуктовым результатом без готовых кандидатов или доказанного объяснения их отсутствия.
