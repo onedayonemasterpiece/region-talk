@@ -1,0 +1,68 @@
+name: Region Talk control tick
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: tick, health, analyze, research_import, pause, resume
+        required: false
+        default: tick
+        type: string
+      target:
+        description: Optional committed path/run/candidate selector
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: region-talk-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  control:
+    if: ${{ vars.REGION_TALK_ORCHESTRATOR_ENABLED == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: region-talk-control
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+      GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL }}
+      GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY }}
+      REGION_TALK_STATE_DATASET: ${{ vars.REGION_TALK_STATE_DATASET }}
+      REGION_TALK_RUN_HISTORY_DATASET: ${{ vars.REGION_TALK_RUN_HISTORY_DATASET }}
+      REGION_TALK_ORCHESTRATOR_ENABLED: '1'
+      REGION_TALK_MODE: ${{ inputs.mode || 'tick' }}
+      REGION_TALK_TARGET: ${{ inputs.target || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install exact checkout
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Preflight required non-secret configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${KAGGLE_API_TOKEN:?missing KAGGLE_API_TOKEN}"
+          : "${KAGGLE_USERNAME:?missing KAGGLE_USERNAME}"
+          : "${GOOGLE_AI_LIMITER_SUPABASE_URL:?missing limiter URL}"
+          : "${GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY:?missing limiter key}"
+          : "${REGION_TALK_STATE_DATASET:?missing state dataset}"
+          : "${REGION_TALK_RUN_HISTORY_DATASET:?missing run history dataset}"
+      - name: Execute one bounded control tick
+        run: |
+          echo 'Bootstrap workflow is intentionally non-operational until the runtime phases are implemented.'
+          echo 'Do not replace this line with long polling.'
+          exit 1
