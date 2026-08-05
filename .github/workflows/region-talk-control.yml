@@ -30,39 +30,68 @@ jobs:
     timeout-minutes: 10
     environment: region-talk-control
     env:
+      # Kaggle supports either the current access token or the existing legacy
+      # username/key pair. Do not require a new token when the proven key works.
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
       KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+
       GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL }}
       GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY }}
-      REGION_TALK_STATE_DATASET: ${{ vars.REGION_TALK_STATE_DATASET }}
-      REGION_TALK_RUN_HISTORY_DATASET: ${{ vars.REGION_TALK_RUN_HISTORY_DATASET }}
+
+      # Optional overrides. Empty values are derived from KAGGLE_USERNAME.
+      REGION_TALK_STATE_DATASET_OVERRIDE: ${{ vars.REGION_TALK_STATE_DATASET }}
+      REGION_TALK_RUN_HISTORY_DATASET_OVERRIDE: ${{ vars.REGION_TALK_RUN_HISTORY_DATASET }}
+
       REGION_TALK_ORCHESTRATOR_ENABLED: '1'
       REGION_TALK_MODE: ${{ inputs.mode || 'tick' }}
       REGION_TALK_TARGET: ${{ inputs.target || '' }}
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 1
           persist-credentials: false
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
+
       - name: Install exact checkout
         run: python -m pip install --disable-pip-version-check -e .
-      - name: Preflight required non-secret configuration
+
+      - name: Derive and validate control configuration
         shell: bash
         run: |
           set -euo pipefail
-          : "${KAGGLE_API_TOKEN:?missing KAGGLE_API_TOKEN}"
           : "${KAGGLE_USERNAME:?missing KAGGLE_USERNAME}"
-          : "${GOOGLE_AI_LIMITER_SUPABASE_URL:?missing limiter URL}"
-          : "${GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY:?missing limiter key}"
-          : "${REGION_TALK_STATE_DATASET:?missing state dataset}"
-          : "${REGION_TALK_RUN_HISTORY_DATASET:?missing run history dataset}"
+
+          if [[ -n "${KAGGLE_API_TOKEN:-}" ]]; then
+            auth_mode='access_token'
+          elif [[ -n "${KAGGLE_KEY:-}" ]]; then
+            auth_mode='legacy_key'
+          else
+            echo 'missing Kaggle authentication: set KAGGLE_API_TOKEN or KAGGLE_KEY' >&2
+            exit 1
+          fi
+
+          state_dataset="${REGION_TALK_STATE_DATASET_OVERRIDE:-${KAGGLE_USERNAME}/region-talk-state}"
+          run_history_dataset="${REGION_TALK_RUN_HISTORY_DATASET_OVERRIDE:-${KAGGLE_USERNAME}/region-talk-run-history}"
+
+          {
+            echo "REGION_TALK_STATE_DATASET=${state_dataset}"
+            echo "REGION_TALK_RUN_HISTORY_DATASET=${run_history_dataset}"
+            echo "REGION_TALK_KAGGLE_AUTH_MODE=${auth_mode}"
+          } >> "$GITHUB_ENV"
+
+          echo "Kaggle auth mode: ${auth_mode}"
+          echo "State dataset: ${state_dataset}"
+          echo "Run-history dataset: ${run_history_dataset}"
+
       - name: Execute one bounded control tick
         run: |
-          echo 'Bootstrap workflow is intentionally non-operational until the runtime phases are implemented.'
+          echo 'Bootstrap workflow remains disabled until runtime phases and smoke gates are implemented.'
           echo 'Do not replace this line with long polling.'
           exit 1
