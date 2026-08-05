@@ -1,0 +1,29 @@
+schema_version: region-talk-editorial-policy-v1
+voice_core: calm_cultural_navigator_with_editorial_warmth
+language: ru-RU
+structure:
+  paragraphs: 2
+  paragraph_1_sentences: 2
+  paragraph_2_sentences_min: 1
+  paragraph_2_sentences_max: 2
+  hook_chars_min: 45
+  hook_chars_max: 110
+  caption_visible_chars_target_min: 550
+  caption_visible_chars_max: 900
+irony:
+  cap: 1
+  removable: true
+  disabled_for_sensitive_or_uncertain: true
+hard_failures:
+  - unsupported_fact
+  - omitted_required_fact
+  - unsupported_prestige
+  - false_urgency_or_emotion
+  - source_ownership_ambiguity
+  - body_url
+  - cta_or_metatext_in_body
+  - unsafe_irony
+  - contrastive_not_a_cliche
+  - invalid_grounding_reference
+  - stale_source_or_media_fingerprint
+  - invalid_paragraph_or_sentence_structure

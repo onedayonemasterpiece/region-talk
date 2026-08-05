@@ -1,0 +1,26 @@
+schema_version: region-talk-product-policy-v1
+timezone: Europe/Kaliningrad
+publication:
+  enabled: false
+  telegram_target_username: kalinigrad_visit
+  slots_local: ["11:30", "18:30"]
+  daily_lanes:
+    article: 1
+    social: 1
+  require_exact_operator_reaction_reread: true
+  require_current_revision: true
+  require_exact_media_materialization: true
+  vk_enabled: false
+diversity:
+  adjacent_same_source: forbidden
+  same_source_min_gap_days: 3
+  max_same_topic_in_3_posts: 2
+  max_same_place_in_3_posts: 2
+  max_same_presentation_mode_in_3_posts: 2
+  expire_unscheduled_candidate_days: 30
+operator_review:
+  positive_reactions: ["👍", "❤️"]
+  negative_reactions: ["👎"]
+  rewrite_reactions: ["✍"]
+  exact_reviewer_allowlist_required: true
+  aggregate_counts_are_not_evidence: true

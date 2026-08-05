@@ -1,0 +1,57 @@
+schema_version: region-talk-stage-registry-v1
+cpu_only: true
+stages:
+  research_import:
+    executor: github
+    auth_scope: null
+    max_runtime_seconds: 300
+  candidate_e5:
+    executor: kaggle
+    auth_scope: telegram:discovery1
+    models:
+      - family: e5
+        id: intfloat/multilingual-e5-base
+        revision: REQUIRED_PIN
+    forbidden_model_families: [bge]
+    max_runtime_seconds: 1800
+  bge_enrichment:
+    executor: kaggle
+    auth_scope: null
+    models:
+      - family: bge
+        id: BAAI/bge-m3
+        revision: REQUIRED_PIN
+    forbidden_model_families: [e5]
+    max_runtime_seconds: 2400
+  fusion:
+    executor: github
+    auth_scope: null
+    max_runtime_seconds: 600
+  image_diagnostic:
+    executor: kaggle
+    auth_scope: telegram:discovery2
+    max_runtime_seconds: 2400
+  source_profile_capture:
+    executor: kaggle
+    auth_scope: telegram:discovery1
+    max_runtime_seconds: 1800
+  finalizer_writer:
+    executor: github
+    auth_scope: null
+    max_runtime_seconds: 900
+  operator_notify:
+    executor: github
+    auth_scope: telegram:bot
+    max_runtime_seconds: 300
+  reaction_sync:
+    executor: github
+    auth_scope: telegram:discovery2
+    max_runtime_seconds: 300
+  schedule_plan:
+    executor: github
+    auth_scope: null
+    max_runtime_seconds: 300
+  publisher:
+    executor: github
+    auth_scope: telegram:publisher
+    max_runtime_seconds: 600

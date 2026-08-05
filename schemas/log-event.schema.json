@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/region-talk/log-event-v1.schema.json",
+  "title": "Region Talk structured log event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ts", "run_id", "stage", "level", "event"],
+  "properties": {
+    "schema_version": {"const": "region-talk-log-event-v1"},
+    "ts": {"type": "string", "format": "date-time"},
+    "run_id": {"type": "string"},
+    "stage": {"type": "string"},
+    "level": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+    "event": {"type": "string", "pattern": "^[a-z][a-z0-9_.:-]{1,95}$"},
+    "entity_type": {"type": ["string", "null"]},
+    "entity_id_hash": {"type": ["string", "null"]},
+    "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+    "reason_code": {"type": ["string", "null"]},
+    "message": {"type": ["string", "null"], "maxLength": 2000},
+    "counters": {"type": "object"},
+    "safe": {"type": "object"}
+  }
+}

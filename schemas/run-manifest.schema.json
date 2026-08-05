@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/region-talk/run-manifest-v1.schema.json",
+  "title": "Region Talk run manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "stage", "git_sha", "cpu_only",
+    "base_state", "worker", "started_at", "status", "files"
+  ],
+  "properties": {
+    "schema_version": {"const": "region-talk-run-manifest-v1"},
+    "run_id": {"type": "string", "minLength": 8, "maxLength": 160},
+    "stage": {"enum": [
+      "research_import", "candidate_e5", "bge_enrichment", "fusion",
+      "image_diagnostic", "source_profile_capture", "finalizer_writer",
+      "operator_notify", "reaction_sync", "schedule_plan", "publisher"
+    ]},
+    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "cpu_only": {"const": true},
+    "base_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_ref", "version", "sha256"],
+      "properties": {
+        "dataset_ref": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "version": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "version", "auth_scope", "models"],
+      "properties": {
+        "ref": {"type": "string"},
+        "version": {"type": ["integer", "null"], "minimum": 1},
+        "auth_scope": {"type": ["string", "null"]},
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "revision"],
+            "properties": {
+              "id": {"type": "string"},
+              "revision": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": ["string", "null"], "format": "date-time"},
+    "status": {"enum": ["planned", "active", "complete", "failed", "blocked", "cancelled"]},
+    "budgets": {"type": "object"},
+    "policy_versions": {"type": "object"},
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "bytes"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^[^/].*"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "secret_scan": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {"status": {"enum": ["pass", "fail"]}},
+      "additionalProperties": true
+    }
+  }
+}

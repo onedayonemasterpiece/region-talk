@@ -1,0 +1,36 @@
+schema_version: region-talk-editorial-source-manifest-v1
+source_repository: onedayonemasterpiece/events-bot-new
+items:
+  - source: docs/editorial/README.md
+    source_pr: 286
+    destination: docs/source-material/events-bot-new/editorial/README.md
+  - source: docs/editorial/research/2026-08-03-chatgpt-deep-research.md
+    source_pr: 286
+    destination: docs/source-material/events-bot-new/editorial/research/2026-08-03-chatgpt-deep-research.md
+  - source: docs/editorial/research/2026-08-03-gemini-deep-research.md
+    source_pr: 286
+    destination: docs/source-material/events-bot-new/editorial/research/2026-08-03-gemini-deep-research.md
+  - source: docs/editorial/research/2026-08-03-synthesis.md
+    source_pr: 286
+    destination: docs/source-material/events-bot-new/editorial/research/2026-08-03-synthesis.md
+  - source: docs/features/region-talk-channel/editorial-visual-product.md
+    destination: docs/source-material/events-bot-new/region-talk/editorial-visual-product.md
+  - source: docs/features/region-talk-channel/publication-queue.md
+    destination: docs/source-material/events-bot-new/region-talk/publication-queue.md
+  - source: docs/features/region-talk-channel/source-onboarding-profile.md
+    destination: docs/source-material/events-bot-new/region-talk/source-onboarding-profile.md
+  - source: docs/features/region-talk-channel/source-profile-recovery-plan.md
+    destination: docs/source-material/events-bot-new/region-talk/source-profile-recovery-plan.md
+  - source: docs/features/region-talk-channel/telegram-vk-publishing.md
+    destination: docs/source-material/events-bot-new/region-talk/telegram-vk-publishing.md
+  - source: docs/features/region-talk-channel/external-publications.md
+    destination: docs/source-material/events-bot-new/region-talk/external-publications.md
+  - source: docs/features/region-talk-channel/editorial-onboarding-writer-gemini-review.prompt.md
+    destination: docs/source-material/events-bot-new/region-talk/editorial-onboarding-writer-gemini-review.prompt.md
+  - source: docs/features/region-talk-channel/onboarding-prompt-consultation.md
+    destination: docs/source-material/events-bot-new/region-talk/onboarding-prompt-consultation.md
+requirements:
+  - record exact source commit SHA
+  - record exact destination SHA-256
+  - preserve historical files without rewriting
+  - label derived canonical policy separately

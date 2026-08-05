@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/region-talk/delta-envelope-v1.schema.json",
+  "title": "Region Talk typed delta envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "delta_id", "run_id", "stage", "base_state_version",
+    "base_state_sha256", "created_at", "operations"
+  ],
+  "properties": {
+    "schema_version": {"const": "region-talk-delta-v1"},
+    "delta_id": {"type": "string", "minLength": 16},
+    "run_id": {"type": "string"},
+    "stage": {"type": "string"},
+    "base_state_version": {"type": "integer", "minimum": 1},
+    "base_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "operations": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "entity", "key", "payload"],
+        "properties": {
+          "op": {"enum": [
+            "insert_if_absent", "upsert_if_revision_matches",
+            "transition_if_status_in", "append_event_if_absent",
+            "delete_only_with_tombstone"
+          ]},
+          "entity": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
+          "key": {"type": "object", "minProperties": 1},
+          "expected": {"type": "object"},
+          "payload": {"type": "object"},
+          "reason_code": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

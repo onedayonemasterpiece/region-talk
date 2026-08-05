@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/region-talk/external-research-v2.schema.json",
+  "title": "Region Talk external research result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "request_id", "created_at", "research_scope",
+    "candidates", "excluded", "unresolved", "publisher_profiles",
+    "source_registry_snapshot", "methodology", "limitations"
+  ],
+  "properties": {
+    "schema_version": {"const": "region-talk-external-research-v2"},
+    "request_id": {"type": "string", "pattern": "^region-talk-external-[A-Za-z0-9._-]+$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "research_scope": {"type": "object"},
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/candidate"}
+    },
+    "excluded": {"type": "array", "items": {"type": "object"}},
+    "unresolved": {"type": "array", "items": {"type": "object"}},
+    "publisher_profiles": {"type": "array", "items": {"type": "object"}},
+    "source_registry_snapshot": {"type": "object"},
+    "methodology": {"type": "object"},
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "candidate_external_id", "canonical_url", "title", "source",
+        "access_status", "policy_classification", "evidence",
+        "downstream_readiness"
+      ],
+      "properties": {
+        "candidate_external_id": {"type": "string"},
+        "canonical_url": {"type": "string", "format": "uri"},
+        "title": {"type": "string", "minLength": 1},
+        "source": {"type": "object"},
+        "doi": {"type": ["string", "null"]},
+        "authors": {"type": "array", "items": {"type": "string"}},
+        "published_at": {"type": ["string", "null"]},
+        "access_status": {"enum": ["full_text", "substantial_text", "teaser_only", "blocked", "unknown"]},
+        "policy_classification": {"type": "object"},
+        "evidence": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        "downstream_readiness": {"enum": ["candidate_report", "excluded", "unresolved"]}
+      }
+    }
+  }
+}
