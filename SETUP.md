@@ -1,30 +1,23 @@
 # Region Talk — только действительно внешние настройки
 
-Репозиторий уже private, bootstrap установлен, repository validation пройден. Большая часть прежнего missing-values списка не является обязательной: имена Kaggle assets выводятся из `KAGGLE_USERNAME`, модели закрепляются в репозитории, target channel определяется по username, а отдельный Supabase control-plane для первого рабочего контура не нужен.
+Репозиторий private, bootstrap установлен, repository validation пройден. Имена Kaggle assets выводятся из `KAGGLE_USERNAME`, модели закрепляются в репозитории, target channel определяется по username, а отдельный Supabase control-plane для первого рабочего контура не нужен.
 
-## Что требуется сейчас для первого Kaggle smoke
+## Kaggle authentication — выполнено
 
-Страница GitHub Actions Secrets:
-<https://github.com/onedayonemasterpiece/region-talk/settings/secrets/actions>
-
-Добавить **один** из двух поддерживаемых вариантов Kaggle-аутентификации:
+Настроена рабочая legacy-пара:
 
 ```text
-KAGGLE_API_TOKEN
-```
-
-или переиспользовать уже работавшую legacy-пару:
-
-```text
-KAGGLE_USERNAME  # уже GitHub Variable
+KAGGLE_USERNAME  # GitHub Variable
 KAGGLE_KEY       # GitHub Secret
 ```
 
-Не требовать оба варианта одновременно. Для текущего проекта предпочтительно сначала переиспользовать существующий `KAGGLE_KEY`, потому что именно этот контур уже работал в `events-bot-new`.
+Read-only authenticated smoke прошёл в GitHub Actions run `30990961846` через `kaggle kernels list --mine`. Dataset не создавался, kernel не запускался, sanitized receipt сохранён в artifact `8924068337`.
+
+Новый `KAGGLE_API_TOKEN` сейчас не требуется. Оба варианта одновременно не нужны.
 
 Уже добавленные Google/Supabase-limiter и Telegram DISCOVERY credentials сохраняются без изменений.
 
-## Что потребуется позже, но не блокирует Kaggle smoke
+## Что потребуется позже
 
 ### Review chat и публикация
 
@@ -52,7 +45,7 @@ REGION_TALK_YDB_READONLY_CREDENTIAL
 
 После подтверждённой миграции credential удалить.
 
-## Что больше не требуется
+## Что не требуется
 
 Не создавать и не запрашивать:
 
@@ -115,4 +108,4 @@ Fernet key и ciphertext могут оставаться в одном private d
 REGION_TALK_ORCHESTRATOR_ENABLED=0
 ```
 
-оставить до успешного Kaggle authentication smoke, миграционного dry-run и полного ручного pipeline run. Production publisher также остаётся выключенным.
+оставить до создания/readback private state datasets, миграционного dry-run и полного ручного pipeline run. Production publisher также остаётся выключенным.
