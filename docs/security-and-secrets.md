@@ -1,136 +1,126 @@
 # Безопасность и секреты
 
-## 1. Gate zero: private everywhere
+## 1. Базовая граница
 
-Before any source/data/secret is pushed:
+- GitHub repository `onedayonemasterpiece/region-talk` — private.
+- Все Region Talk Kaggle kernels, state datasets, run-history datasets и временные input datasets — private.
+- Fork/PR jobs не получают production secrets.
+- BGE worker не получает Telegram, bot или Google credentials.
+- Scheduler и publisher остаются выключенными до canary.
 
-- GitHub repository `onedayonemasterpiece/region-talk` is private;
-- Actions default token permissions are read-only, elevated per workflow only;
-- fork PR workflows cannot access environments/secrets;
-- all Kaggle kernels and datasets are private;
-- no public notebook/dataset is used as an input if it embeds project state;
-- GitHub environment approvals guard migration and production publication.
+## 2. Kaggle-аутентификация из GitHub
 
-The repository is currently known to be public and empty. Privacy conversion is the first code-agent action.
+Поддерживаются оба официальных способа:
 
-## 2. Secret inventory and placement
+1. современный GitHub Secret `KAGGLE_API_TOKEN`;
+2. уже работавшая legacy-пара `KAGGLE_USERNAME` + GitHub Secret `KAGGLE_KEY`.
 
-### 2.1. GitHub repository/environment secrets
+Первый smoke не должен блокироваться только потому, что не создан новый token, если существующий legacy key продолжает проходить authenticated Kaggle API probe. Не хранить `kaggle.json`, access token или key в репозитории и artifacts.
 
-Required for orchestration/runtime:
+## 3. Transport runtime-секретов в Kaggle
 
-- `KAGGLE_API_TOKEN` — current Kaggle API token; never legacy plaintext file in repo.
-- `GOOGLE_AI_LIMITER_SUPABASE_URL` — dedicated canonical limiter project URL.
-- `GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY` — server-side limiter credential.
-- `GOOGLE_API_KEY`, `GOOGLE_API_KEY2` ... only the exact active registered key set; do not invent or silently omit a scope.
-- `TG_API_ID`, `TG_API_HASH` — Telegram application credentials.
-- `TELEGRAM_AUTH_BUNDLE_DISCOVERY1` — Candidate/E5 and exact source acquisition role.
-- `TELEGRAM_AUTH_BUNDLE_DISCOVERY2` — Image/reaction role.
-- `REGION_TALK_TELEGRAM_BOT_TOKEN` — review notifier/command/publisher bot when Bot API is used.
-- `VK_SERVICE_TOKEN`, `VK_ACCESS_TOKEN` — only if VK read/publish scope is enabled.
-- `REGION_TALK_MANIFEST_HMAC_KEY` — optional but recommended integrity attestation for control manifests; distinct from encryption keys.
+Для первого рабочего контура используется уже доказанный механизм `events-bot-new`, а не новая sealed-box инфраструктура:
 
-Migration-only protected environment `region-talk-ydb-migration`:
+1. GitHub Actions собирает минимальный allowlist секретов для конкретного stage.
+2. Для run создаётся уникальный private ephemeral Kaggle Dataset.
+3. Secret payload шифруется Fernet; ciphertext и key находятся в одной private dataset version, чтобы Kaggle не смонтировал рассинхронизированные версии.
+4. Kernel читает payload только в памяти и не копирует его в output.
+5. После terminal run dataset удаляется; bounded TTL-GC удаляет забытые временные datasets после падения controller.
+6. Output/archive перед commit проходит exact-secret/HMAC/prefix/high-entropy scan.
 
-- temporary read-only YDB credential or OIDC/WIF inputs;
-- no credential is copied to normal runtime after migration.
+Важно: Fernet key рядом с ciphertext **не является самостоятельной криптографической границей**. Он уменьшает риск случайного отображения payload, но реальная граница — private Kaggle account/dataset ACL. Не описывать этот механизм как защиту от компрометации Kaggle account.
 
-Migration/schema administration protected environment:
+Дополнительная sealed-box public/private key pair и обязательный Kaggle User Secret в MVP удалены: они создавали новый ручной bootstrap и не были нужны для уже работавшего способа запуска. Kaggle User Secrets можно позже принять как hardening после отдельного API-started smoke, но их отсутствие не блокирует pipeline.
 
-- `REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING` or approved migration credential;
-- removed/limited after applying migrations if not needed at runtime.
+## 4. Stage-scoped allowlists
 
-### 2.2. GitHub variables, not secrets
+### Candidate/E5 и source profile — DISCOVERY1
 
-- `KAGGLE_USERNAME`;
-- `REGION_TALK_STATE_DATASET`;
-- `REGION_TALK_RUN_HISTORY_DATASET`;
-- exact Kaggle kernel refs;
-- E5/BGE model dataset refs and immutable revisions;
-- `REGION_TALK_REVIEW_CHAT_ID`;
-- `REGION_TALK_OPERATOR_REVIEWER_IDS` (may be a secret if the owner prefers);
-- `REGION_TALK_TARGET_CHANNEL_ID` and username;
-- publication slots/time zone and daily caps;
-- Supabase schema name;
-- feature gates.
+```text
+TG_API_ID
+TG_API_HASH
+TELEGRAM_AUTH_BUNDLE_DISCOVERY1
+GOOGLE_AI_LIMITER_SUPABASE_URL
+GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY
+только назначенные stage Google keys
+```
 
-### 2.3. Kaggle User Secrets
+### ImageDiagnostic / reaction read — DISCOVERY2
 
-Preferred single long-lived Kaggle secret:
+```text
+TG_API_ID
+TG_API_HASH
+TELEGRAM_AUTH_BUNDLE_DISCOVERY2
+```
 
-- `REGION_TALK_SEALED_BOX_PRIVATE_KEY`.
+Google key добавляется только для реально включённого visual-LLM stage.
 
-GitHub stores only the matching public key as a repository variable. For each run GitHub creates a short-lived private input dataset containing an authenticated sealed ciphertext. Kernel reads its private key through Kaggle User Secrets, decrypts in memory and deletes the plaintext immediately after process configuration.
+### BGE
 
-Alternative, only after an API-started smoke proves availability: store the required Telegram/limiter/Google secrets directly in Kaggle User Secrets and stop shipping them through datasets.
+Не получает ни одного Telegram, bot, publisher, Supabase service или Google secret.
 
-## 3. Reject the cipher+key-together pattern
+### Review notifier / publisher
 
-Encrypting secrets and attaching both ciphertext and decryption key to the same kernel/dataset boundary protects mainly against accidental casual viewing, not against compromise of the run or dataset sources. The new implementation must not create a bundle containing both components accessible through the same GitHub-generated input.
+Переиспользует существующий GitHub Secret:
 
-If Kaggle User Secrets cannot provide the private key to API-started kernels, stages requiring sensitive Telegram credentials remain blocked until one of these is implemented:
+```text
+TELEGRAM_BOT_TOKEN
+```
 
-- a proven supported Kaggle secret path;
-- a separate trusted secret broker with short-lived credentials;
-- moving that stage to a protected GitHub/runtime environment.
+Не создавать отдельный bot и отдельное имя `REGION_TALK_TELEGRAM_BOT_TOKEN`, если используется тот же бот.
 
-Do not weaken the boundary by returning to plaintext or co-mounted key material.
+### Migration
 
-## 4. Role separation
+Только временный environment secret:
 
-- DISCOVERY1: candidate/source text acquisition and profile capture only.
-- DISCOVERY2: image acquisition and exact reaction observation only.
-- Bot publisher: target send/commands only.
-- BGE: no Telegram or publication credentials.
-- Reconciler: Kaggle/state/Supabase control access, no unnecessary Telegram session.
-- Migration: YDB read only, temporary.
+```text
+REGION_TALK_YDB_READONLY_CREDENTIAL
+```
 
-Same Telegram session cannot be active in parallel. Every attempt declares `remote_telegram_auth_scope`; unknown scope conflicts fail closed.
+YDB endpoint/database являются versioned expected identity в миграционном коде. Credential удаляется после export/readback.
 
-## 5. Logging rules
+## 5. Supabase
 
-Never log:
+В первой рабочей версии Kaggle получает только доступ к уже существующему canonical Google AI limiter. Новая `region_talk_control` schema и direct PostgreSQL credential не являются launch prerequisites.
 
-- env vars or full config;
-- secret names together with values;
-- Telegram session payloads/device metadata bundle;
-- Authorization headers;
-- Supabase service key;
-- Google/VK/Kaggle tokens;
-- signed/temporary URLs with query parameters;
-- encrypted secret payload bytes;
-- raw exception objects that include request headers.
+## 6. Role separation
 
-Log safe metadata only:
+- DISCOVERY1: candidate/source text acquisition и source profile capture.
+- DISCOVERY2: image acquisition и exact reaction observation.
+- Bot: review notification, commands и approved publication.
+- BGE: vector enrichment без внешних продуктовых credentials.
+- Reconciler: Kaggle/state orchestration; не получает Telegram user session без необходимости.
+- Migration: YDB read-only и временно.
 
-- credential role/scope ID;
-- key registry ID and quota scope, never key value;
-- provider/model;
-- request fingerprint;
-- status/reason/duration/token counts;
-- canonical URL without secret query parameters;
-- hashed private identifiers.
+Один Telegram auth bundle нельзя использовать в двух одновременных kernels. Каждая attempt декларирует `auth_scope`; конфликт блокирует launch.
 
-## 6. Secret scan
+## 7. Что нельзя логировать
 
-Before output/archive/state publish scan for:
+- env/config dumps;
+- secret values, Authorization headers и signed URLs;
+- Telegram session bundles/device metadata;
+- Supabase service key, Google/VK/Kaggle tokens;
+- encrypted payload или Fernet key;
+- `.env`, `kaggle.json`, `.session`, `.pem`, `.key` files;
+- исключения вместе с request headers/body, если они могут содержать credentials.
 
-- exact HMAC fingerprints of all injected secrets;
-- known prefixes (`AIza`, `sb_secret_`, JWT-like structures, Telegram session/base64 signatures, private key headers);
-- environment key/value patterns;
-- URL credentials/query tokens;
-- accidental `.env`, `kaggle.json`, `.session`, `.pem`, `.key` files;
-- high-entropy strings in suspicious contexts.
+Допустимы только role/scope ID, provider/model, request fingerprint, duration, usage, redacted status/reason и canonical URL без credentials.
 
-False positives are reviewed through a quarantine artifact inaccessible to ordinary jobs. A scan failure blocks all downstream publication.
+## 8. Secret scan и incident response
 
-## 7. Rotation and incident response
+Перед публикацией output/state/archive проверять:
 
-- invalidate the affected key/session immediately;
-- pause orchestrator and publisher;
-- identify all run/dataset/artifact versions that may contain it;
-- delete/restrict accessible copies where platform permits;
-- rotate Kaggle input datasets and sessions;
-- audit provider usage and Telegram active sessions;
-- add exact regression fingerprint/test;
-- document incident and restore only after clean canary.
+- exact fingerprints всех injected secrets;
+- известные prefixes и JWT/session/private-key patterns;
+- URL query credentials;
+- suspicious high-entropy strings;
+- запрещённые filenames.
+
+При обнаружении:
+
+1. остановить orchestrator/publisher;
+2. удалить/закрыть affected temporary datasets и artifacts;
+3. rotate key/session;
+4. проверить provider usage и Telegram active sessions;
+5. добавить regression fixture;
+6. возобновить работу только после clean canary.
