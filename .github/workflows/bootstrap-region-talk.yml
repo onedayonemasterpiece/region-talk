@@ -34,7 +34,7 @@ jobs:
           git clone --branch main /tmp/region-talk.bundle /tmp/region-talk-bootstrap
           test "$(git -C /tmp/region-talk-bootstrap rev-parse HEAD)" = '6c8873572a4b4b76d9d51b66226335762b2d525a'
 
-      - name: Install reviewed repository tree
+      - name: Install reviewed repository tree except workflow files
         shell: bash
         run: |
           set -euo pipefail
@@ -43,7 +43,13 @@ jobs:
           cp CODE_AGENT_SETTINGS_PROMPT.md /tmp/region-talk-preserve/CODE_AGENT_SETTINGS_PROMPT.md
           cp research/REGION_TALK_RESEARCH_INTAKE_PROMPT_V3.md /tmp/region-talk-preserve/research/
 
-          rsync -a --delete --exclude '.git' /tmp/region-talk-bootstrap/ "$GITHUB_WORKSPACE/"
+          # The job token may commit ordinary repository files but GitHub blocks it
+          # from creating other workflow files without the separate workflows scope.
+          # ChatGPT installs those two reviewed workflow files directly afterwards.
+          rsync -a --delete \
+            --exclude '.git' \
+            --exclude '.github/workflows/' \
+            /tmp/region-talk-bootstrap/ "$GITHUB_WORKSPACE/"
 
           cp /tmp/region-talk-preserve/SETUP.md SETUP.md
           cp /tmp/region-talk-preserve/CODE_AGENT_SETTINGS_PROMPT.md CODE_AGENT_SETTINGS_PROMPT.md
