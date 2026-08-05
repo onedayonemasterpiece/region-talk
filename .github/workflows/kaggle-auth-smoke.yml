@@ -44,47 +44,70 @@ jobs:
 
       - name: Install official Kaggle client
         shell: bash
-        run: python -m pip install --disable-pip-version-check 'kaggle>=1.8.2,<2'
+        run: python -m pip install --disable-pip-version-check 'kaggle==1.8.4'
 
-      - name: Authenticate against Kaggle quota endpoint
+      - name: Authenticate through own-kernels listing
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/kaggle-auth-smoke
-          python - <<'PY'
+
+          set +e
+          kaggle kernels list --mine --page-size 1 --csv \
+            > /tmp/region-talk-kaggle-owned-kernels.csv \
+            2> /tmp/region-talk-kaggle-auth-error.txt
+          rc=$?
+          set -e
+
+          python - "$rc" <<'PY'
+          import csv
           import json
-          import os
+          import sys
           from datetime import datetime, timezone
           from pathlib import Path
 
-          from kaggle.api.kaggle_api_extended import KaggleApi
-
+          rc = int(sys.argv[1])
           out = Path('artifacts/kaggle-auth-smoke/result.json')
+          csv_path = Path('/tmp/region-talk-kaggle-owned-kernels.csv')
+          error_path = Path('/tmp/region-talk-kaggle-auth-error.txt')
+
           result = {
-              'schema_version': 'region-talk-kaggle-auth-smoke-v1',
+              'schema_version': 'region-talk-kaggle-auth-smoke-v2',
               'checked_at_utc': datetime.now(timezone.utc).isoformat(),
               'auth_mode': 'legacy_username_key',
-              'username_present': bool(os.environ.get('KAGGLE_USERNAME')),
-              'server_authenticated': False,
-              'quota_endpoint_reached': False,
+              'authenticated_endpoint': 'kernels_list_mine',
+              'server_authenticated': rc == 0,
               'created_dataset': False,
               'started_kernel': False,
           }
-          try:
-              api = KaggleApi()
-              api.authenticate()
-              api.quota_view()
-          except Exception as exc:
-              result['failure_class'] = type(exc).__name__
-              out.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-              print(f'Kaggle authentication failed: {type(exc).__name__}', flush=True)
-              raise SystemExit(1)
+
+          if rc == 0:
+              rows = []
+              if csv_path.is_file() and csv_path.stat().st_size:
+                  with csv_path.open(newline='', encoding='utf-8', errors='replace') as fh:
+                      rows = list(csv.DictReader(fh))
+              result['owned_kernel_rows_observed'] = len(rows)
+              print('Kaggle authentication succeeded; authenticated own-kernels endpoint reached.', flush=True)
           else:
-              result['server_authenticated'] = True
-              result['quota_endpoint_reached'] = True
-              out.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-              print('Kaggle authentication succeeded; read-only quota endpoint reached.', flush=True)
+              raw = error_path.read_text(encoding='utf-8', errors='replace') if error_path.is_file() else ''
+              lowered = raw.casefold()
+              if '401' in lowered or 'unauthorized' in lowered or 'authentication' in lowered:
+                  failure = 'unauthorized'
+              elif '403' in lowered or 'forbidden' in lowered:
+                  failure = 'forbidden'
+              elif '429' in lowered or 'too many requests' in lowered:
+                  failure = 'rate_limited'
+              else:
+                  failure = 'kaggle_cli_nonzero'
+              result['failure_class'] = failure
+              result['client_exit_code'] = rc
+              print(f'Kaggle authentication failed: {failure}', flush=True)
+
+          out.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+          raise SystemExit(0 if rc == 0 else 1)
           PY
+
+          rm -f /tmp/region-talk-kaggle-owned-kernels.csv /tmp/region-talk-kaggle-auth-error.txt
 
       - name: Upload sanitized smoke receipt
         if: ${{ always() }}
