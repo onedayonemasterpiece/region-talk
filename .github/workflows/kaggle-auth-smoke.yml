@@ -1,0 +1,96 @@
+name: Kaggle authentication smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle-auth-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: region-talk-kaggle-auth-smoke
+  cancel-in-progress: false
+
+jobs:
+  authenticate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Preflight credential presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${KAGGLE_USERNAME:?missing KAGGLE_USERNAME variable}"
+          : "${KAGGLE_KEY:?missing KAGGLE_KEY secret}"
+          echo "::add-mask::${KAGGLE_KEY}"
+          echo 'Kaggle legacy credential names are present.'
+
+      - name: Install official Kaggle client
+        shell: bash
+        run: python -m pip install --disable-pip-version-check 'kaggle>=1.8.2,<2'
+
+      - name: Authenticate against Kaggle quota endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/kaggle-auth-smoke
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          from kaggle.api.kaggle_api_extended import KaggleApi
+
+          out = Path('artifacts/kaggle-auth-smoke/result.json')
+          result = {
+              'schema_version': 'region-talk-kaggle-auth-smoke-v1',
+              'checked_at_utc': datetime.now(timezone.utc).isoformat(),
+              'auth_mode': 'legacy_username_key',
+              'username_present': bool(os.environ.get('KAGGLE_USERNAME')),
+              'server_authenticated': False,
+              'quota_endpoint_reached': False,
+              'created_dataset': False,
+              'started_kernel': False,
+          }
+          try:
+              api = KaggleApi()
+              api.authenticate()
+              api.quota_view()
+          except Exception as exc:
+              result['failure_class'] = type(exc).__name__
+              out.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+              print(f'Kaggle authentication failed: {type(exc).__name__}', flush=True)
+              raise SystemExit(1)
+          else:
+              result['server_authenticated'] = True
+              result['quota_endpoint_reached'] = True
+              out.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+              print('Kaggle authentication succeeded; read-only quota endpoint reached.', flush=True)
+          PY
+
+      - name: Upload sanitized smoke receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: region-talk-kaggle-auth-smoke-${{ github.sha }}
+          path: artifacts/kaggle-auth-smoke/result.json
+          if-no-files-found: error
+          retention-days: 30
