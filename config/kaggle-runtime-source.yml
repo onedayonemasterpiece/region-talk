@@ -1,0 +1,119 @@
+schema_version: region-talk-kaggle-runtime-source-v1
+source_repository: onedayonemasterpiece/events-bot-new
+source_commit: 5bbdb681623d5e4e0bff2133e487a6663c1a838a
+policy: reuse_proven_runtime_no_greenfield_client
+
+components:
+  shared_client:
+    source_path: video_announce/kaggle_client.py
+    source_blob_sha: 9c552e12b001f7a1a3b213369a74da8ebd7a0b32
+    destination_path: src/region_talk_control/kaggle_runtime.py
+    reuse: generic_transport_port_in_progress
+    already_ported:
+      - lazy official-client authentication
+      - private dataset create/version/delete
+      - dataset status and exact file listing
+      - kernel status normalization
+      - kernel metadata source readback
+      - kernel output download
+      - bounded dataset/source readiness waits
+    still_to_port_exactly:
+      - local kernel tree preparation and ignore policy
+      - status helper injection
+      - kernel push/update retry policy
+      - exact dataset-source binding after push
+      - transient status/output recovery loop
+    owns:
+      - kaggle authentication
+      - private dataset create/version/delete
+      - dataset readiness and file readback
+      - kernel push/update and dataset-source binding
+      - kernel status and output download
+      - bounded retries and platform error classification
+
+  worker_status_client:
+    source_path: kaggle/kaggle_status_client.py
+    source_blob_sha: 4f06b7c9fc35a1cc725df2bdea4815d999508acf
+    destination_path: src/region_talk_control/kaggle_status_client.py
+    reuse: vendored_with_provenance
+    owns:
+      - local append-only status events
+      - heartbeat/alive events
+      - progress normalization
+      - resource acquire/release callbacks
+      - redaction of callback token
+
+  host_status_ledger:
+    source_path: kaggle_status.py
+    source_blob_sha: 00ecc610580cc691197cf72c323bb47d20eff373
+    reuse: adapt_to_region_talk_sqlite
+    owns:
+      - callback token hashing
+      - run event ledger
+      - heartbeat and terminal state
+      - SQLite BEGIN IMMEDIATE writer discipline
+      - notebook/script status instrumentation
+
+  durable_job_registry:
+    source_path: kaggle_registry.py
+    source_blob_sha: e24c2763d3c0d75ab63d3088bf9c0f1eef9971d8
+    reuse: replace_file_registry_with_canonical_sqlite_tables
+    owns:
+      - active remote job identities
+      - recovery metadata
+      - atomic write/replace semantics
+
+  telegram_scope_guard:
+    source_path: remote_telegram_session.py
+    source_blob_sha: 5dd8fc540e82a7a0b6e1599fe8e7e80f35b2a854
+    reuse: preserve_semantics
+    owns:
+      - auth-scope conflict detection
+      - fail-closed unknown scope behavior
+      - terminal/stale status handling
+      - same-session concurrency prevention
+
+  telegram_monitor_reference:
+    source_path: source_parsing/telegram/service.py
+    source_blob_sha: 3620460ec9c32b6de502b1d895ddd89057eea85a
+    entrypoint_path: scripts/run_tg_monitor.py
+    entrypoint_blob_sha: 3df522945455a0baf9bdbc6d6561d2105f012971
+    reuse: lifecycle_reference
+    proves:
+      - stage-scoped secret allowlist
+      - encrypted private temporary datasets
+      - dataset readiness checks
+      - local kernel staging and push
+      - dynamic timeout
+      - transient status recovery by output probing
+      - output download retries
+      - bounded dataset cleanup
+
+  cherryflash_reference:
+    source_path: video_announce/scenario.py
+    source_blob_sha: f9307a3979f8b44f3bdeb8ae6769e2dfdd338d73
+    entrypoint_path: scripts/run_cherryflash_live.py
+    entrypoint_blob_sha: 01dc16a9361534c535fe02d871b9b464168c1d98
+    reuse: lifecycle_reference
+    proves:
+      - durable session state
+      - confirmed remote handoff
+      - dataset-source binding readback
+      - terminal polling
+      - active-lane protection
+      - persisted retry budgets
+
+region_talk_owned_extensions:
+  - canonical SQLite state snapshot and immutable deltas
+  - separate Candidate/E5, BGE-M3, ImageDiagnostic and profile workers
+  - GitHub Actions catch-up scheduler adapter
+  - run-bundle archiving and product-funnel metrics
+  - research JSON intake
+  - Telegram review queue and publication planner
+
+forbidden:
+  - a second standalone Kaggle API client
+  - a new secret transport before a proven deficiency in the existing private-dataset transport
+  - direct KaggleApi usage outside the compatibility runtime and authentication smoke
+  - E5 and BGE-M3 in one production worker
+  - long polling inside GitHub Actions
