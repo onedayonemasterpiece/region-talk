@@ -7,7 +7,22 @@ components:
   shared_client:
     source_path: video_announce/kaggle_client.py
     source_blob_sha: 9c552e12b001f7a1a3b213369a74da8ebd7a0b32
-    reuse: adapt_generic_transport_only
+    destination_path: src/region_talk_control/kaggle_runtime.py
+    reuse: generic_transport_port_in_progress
+    already_ported:
+      - lazy official-client authentication
+      - private dataset create/version/delete
+      - dataset status and exact file listing
+      - kernel status normalization
+      - kernel metadata source readback
+      - kernel output download
+      - bounded dataset/source readiness waits
+    still_to_port_exactly:
+      - local kernel tree preparation and ignore policy
+      - status helper injection
+      - kernel push/update retry policy
+      - exact dataset-source binding after push
+      - transient status/output recovery loop
     owns:
       - kaggle authentication
       - private dataset create/version/delete
