@@ -12,23 +12,14 @@
 - environments созданы;
 - scheduler/publisher feature gate сохранён `0`;
 - Google AI limiter, Google keys, Telegram application credentials и DISCOVERY1/DISCOVERY2 bundles добавлены;
-- лишние sealed-box, mandatory Supabase control-plane и manually-entered asset refs удалены из launch prerequisites.
+- лишние sealed-box, mandatory Supabase control-plane и manually-entered asset refs удалены из launch prerequisites;
+- GitHub Secret `KAGGLE_KEY` добавлен и legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` подтверждены реальным read-only Kaggle API-вызовом;
+- Kaggle authentication smoke run `30990961846` прошёл: authenticated endpoint `kernels list --mine`, без создания dataset и без запуска kernel;
+- sanitized receipt сохранён как artifact `8924068337`; repository validation для того же head также прошёл.
 
-## Реально отсутствует перед первым Kaggle authentication smoke
+## Диагностическая запись первого smoke
 
-Один из двух Kaggle credentials:
-
-```text
-KAGGLE_KEY          # переиспользование действующей legacy-пары
-```
-
-или
-
-```text
-KAGGLE_API_TOKEN    # новый access token
-```
-
-Оба одновременно не нужны.
+Первый run `30990852958` не доказывал ошибку credential: presence preflight прошёл, а smoke упал на удалённом в `kaggle 1.8.4` Python-методе `quota_view` с `AttributeError`. Проверка заменена на поддерживаемый authenticated CLI endpoint `kaggle kernels list --mine`. Повторный run прошёл.
 
 ## Отдельные поздние зависимости
 
@@ -45,7 +36,7 @@ REGION_TALK_REVIEW_CHAT_ID
 REGION_TALK_YDB_READONLY_CREDENTIAL
 ```
 
-Они не должны блокировать Kaggle auth, state bootstrap, BGE/E5 fixture runs или local reconciler tests.
+Они не блокируют state bootstrap, BGE/E5 fixture runs или local reconciler tests.
 
 ## Ещё не реализовано/не выполнено
 
@@ -61,10 +52,9 @@ REGION_TALK_YDB_READONLY_CREDENTIAL
 
 ## Ближайшая последовательность
 
-1. Переиспользовать существующий `KAGGLE_KEY` и выполнить read-only Kaggle API smoke.
-2. Создать/проверить deterministic private dataset/kernel refs.
-3. Реализовать state snapshot/reconciler и fixture cycle без Telegram/provider calls.
-4. Выполнить отдельные Candidate/E5 и BGE CPU smoke runs.
-5. Провести bounded YDB migration.
-6. Выполнить полный ручной pipeline run и разобрать product metrics.
-7. Только после исправления P0/P1 включить регулярный controller; publisher остаётся отдельным gate.
+1. Создать и проверить deterministic private state/run-history datasets и kernel refs.
+2. Реализовать state snapshot/reconciler и fixture cycle без Telegram/provider calls.
+3. Выполнить отдельные Candidate/E5 и BGE CPU smoke runs.
+4. Провести bounded YDB migration.
+5. Выполнить полный ручной pipeline run и разобрать product metrics.
+6. Только после исправления P0/P1 включить регулярный controller; publisher остаётся отдельным gate.
