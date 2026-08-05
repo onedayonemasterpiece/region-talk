@@ -2,7 +2,7 @@
 
 Автономный CPU-only контур поиска, проверки, редакционной подготовки, операторского согласования и публикации внешних материалов о Калининградской области.
 
-> Текущий статус: private repository, bootstrap установлен, repository validation проходит. Scheduler и publisher выключены. Runtime workers, YDB migration и первый полный pipeline run ещё не завершены.
+> Текущий статус: private repository, bootstrap установлен, Kaggle legacy-auth подтверждён, repository validation проходит. Scheduler и publisher выключены. Runtime workers, YDB migration и первый полный pipeline run ещё не завершены.
 
 ## Продуктовый результат
 
@@ -21,6 +21,7 @@
 
 ## Главные архитектурные решения
 
+- **Kaggle runtime:** не создаётся заново; переиспользуются доказанные lifecycle-механики Telegram Monitoring и CherryFlash из `events-bot-new`, закреплённые exact commit/blob SHA.
 - **Каноническое продуктовое состояние:** SQLite snapshot в private versioned Kaggle Dataset.
 - **Тяжёлое исполнение:** отдельные private Kaggle CPU kernels.
 - **E5 и BGE-M3:** разные kernels; одновременная загрузка в один production worker запрещена.
@@ -39,6 +40,11 @@ private GitHub repository
   ├─ code / schemas / policies / research JSON
   ├─ short controller + reconciler
   └─ current compact reports
+                  │
+                  ▼
+ proven events-bot Kaggle lifecycle adapter
+ private inputs → ready/readback → kernel binding
+ → heartbeat/status → output recovery → cleanup
                   │
                   ▼
        private Kaggle CPU workers
@@ -64,6 +70,8 @@ Telegram review chat → schedule → publisher
 ## Репозиторная карта
 
 - `SETUP.md` — только реально внешние параметры.
+- `config/kaggle-runtime-source.yml` — pinned commit/blob SHA доказанного Kaggle runtime.
+- `docs/kaggle-runtime-reuse.md` — что именно переносится из Telegram Monitoring и CherryFlash и что остаётся Region Talk-specific.
 - `docs/architecture.md` — границы системы и потоки данных.
 - `docs/orchestrator.md` — state machine, cron и recovery.
 - `docs/state-history-observability.md` — SQLite, manifests, logs и retention.
