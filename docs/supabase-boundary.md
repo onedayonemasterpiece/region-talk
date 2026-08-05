@@ -1,85 +1,73 @@
 # Supabase boundary
 
-## Decision
+## Решение для первого рабочего контура
 
-Use the **existing dedicated Supabase project that already owns the shared Google AI limiter**. Do not create a new account to distribute free-tier limits and do not create a second independent limiter.
+Использовать существующий Supabase project **только как canonical Google AI limiter**. Не создавать новый аккаунт, второй limiter или обязательную `region_talk_control` schema до первого полного прогона.
 
-A separate account/project would create:
+Обязательные существующие credentials:
 
-- a split-brain quota ledger;
-- additional secrets and migrations;
-- harder incident reconciliation;
-- risk that parallel consumers believe they have independent quota when they share one Google Cloud scope;
-- extra inactive-project lifecycle risk.
+```text
+GOOGLE_AI_LIMITER_SUPABASE_URL
+GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY
+```
 
-A second Supabase project is justified only by a later explicit blast-radius/security decision. It must still call the one canonical limiter rather than copy it.
+`REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING` не является prerequisite и не должен находиться в обычных repository secrets.
 
-## Allowed Region Talk schema
+## Почему новый control-plane сейчас лишний
 
-Schema: `region_talk_control`.
+Первую версию уже сериализуют:
 
-Allowed tables are deliberately small:
+- GitHub Actions `concurrency` — один controller/reconciler workflow;
+- current state manifest — exact base version и SHA;
+- SQLite transaction — атомарное применение delta;
+- Kaggle Dataset version — durable state commit;
+- GitHub Actions/Kaggle attempt IDs — состояние удалённых workers;
+- Telegram exact revision fingerprint — review/publication state.
 
-- `controller_state` — one row;
-- `stage_attempts` — bounded operational attempts;
-- `operator_queue` — current active/recent projection, capped;
-- `operator_review_events` — compact exact review events;
-- `publication_outbox` — active/recent delivery projection;
-- `state_head` — current dataset version/SHA pointer;
-- `control_audit` — compact operator/controller events.
+Дополнительный lease и дублирующая active queue в Supabase не дают необходимой функции, но добавляют schema migration, direct database credential, egress, retention и новый источник рассинхронизации.
 
-Not allowed:
+## Источник истины
 
-- full discovery/source/post state;
-- vectors;
-- raw logs;
-- media;
-- entire article/post texts;
-- source archives;
-- run bundles;
-- prompt corpora;
-- historical state snapshots.
+```text
+product state/history     → private versioned SQLite/Kaggle Dataset
+active workflow exclusion → GitHub Actions concurrency
+worker status             → Kaggle API + durable attempt rows in SQLite
+LLM quotas                → existing Supabase limiter
+review decisions          → Telegram evidence + append-only SQLite events
+publication outbox        → SQLite state
+```
 
-## Write discipline
+## Когда compact Supabase projection можно вернуть
 
-- Upsert only materially changed rows.
-- RPCs return compact JSON and no unneeded columns.
-- Writes use minimal/no representation responses.
-- Active operator queue is capped at 200 rows.
-- Completed stage attempts older than the configured hot window are compacted to SQLite/Kaggle and deleted from Supabase.
-- Review/outbox rows are projected into SQLite before remote retention cleanup.
-- No `select *` in runtime code.
-- Each RPC records returned row/byte estimates in the controller log.
-- Monthly application budget: configurable hard ceiling for calls, rows and response bytes; breach pauses non-critical work.
+Только если первый полный прогон докажет конкретную проблему, например:
 
-## Why this is compatible with a small egress allowance
+- Telegram commands требуют ответа существенно быстрее, чем доступен state snapshot;
+- controller status reads из Kaggle оказываются слишком дорогими или медленными;
+- появляется независимый always-on runtime, которому нужен компактный hot view;
+- GitHub concurrency недостаточно из-за второго реально необходимого controller.
 
-Normal controller tick should require one compact RPC response. Candidate details are fetched only when the operator requests them. Full analysis reads Kaggle/SQLite, not Supabase. Google limiter records remain the dominant Supabase traffic and are already required for safe provider coordination.
+Тогда допускается отдельная schema `region_talk_control` только с компактными таблицами:
 
-Target Region Talk control-plane budget:
+```text
+controller_state
+state_head
+active_attempts
+operator_queue
+operator_review_events
+publication_outbox
+control_audit
+```
 
-- ordinary idle tick response: under 10 KiB;
-- active tick response: under 50 KiB;
-- current queue projection: under 2 MiB total;
-- no media or run logs;
-- less than 100 MiB/month application-side target, with an alert at 50% and hard pause before the configured ceiling.
+Она остаётся projection/cache, а не source of truth. Полные source/post/vector/media/log/state данные в Supabase запрещены.
 
-These are engineering budgets to verify, not provider guarantees.
+## Egress discipline при возможном будущем включении
 
-## Access model
+- materially changed upserts only;
+- no `select *`;
+- compact RPC responses;
+- active queue cap;
+- no media, vectors или run bundles;
+- измерение request/response bytes;
+- application-side monthly budget и fail-closed pause.
 
-- Kaggle receives the dedicated limiter URL/key only for Google provider calls.
-- Kaggle does **not** receive direct Region Talk control-table credentials.
-- GitHub Actions owns control-plane RPC calls and state projection.
-- Telegram operator bot/publisher runs through GitHub Actions or a separately approved small runtime and uses RPCs, not table-wide reads.
-- All public/publish actions fail closed when exact current revision/state cannot be read.
-
-## Failure behavior
-
-| Failure | Behavior |
-|---|---|
-| limiter unavailable | no Google provider call |
-| control schema unavailable | no new kernel/publication launch; active Kaggle run may finish and await reconciliation |
-| projection update fails after state commit | state remains canonical; next tick repairs projection |
-| stale controller lease | compare-and-set takeover after expiry and audit event |
-| queue projection incomplete | operator commands report degraded; no publication |
+До отдельного принятия этой фазы SQL-файл control schema считается optional design artifact и не требует применения.
