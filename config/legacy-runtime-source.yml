@@ -1,0 +1,40 @@
+schema_version: region-talk-legacy-ydb-parity-source-v1
+status: recovery_source_of_truth
+source_repository: onedayonemasterpiece/events-bot-new
+source_commit: 5bbdb681623d5e4e0bff2133e487a6663c1a838a
+
+migration_rule:
+  - preserve_the_working_product_runtime_before_storage_redesign
+  - github_actions_replaces_only_apscheduler_and_server_trigger
+  - no_sqlite_rewrite_is_required_for_ydb_parity
+  - production_publication_remains_disabled_during_recovery
+
+critical_blobs:
+  scheduled_runner:
+    path: scripts/region_talk_scheduled_runner.py
+    blob_sha: 8e1c955b6096556095e3426054b2cc12d96fabf8
+  orchestrator:
+    path: scripts/region_talk_orchestrator.py
+    blob_sha: a68385dfa6da91594e99142998093f457d23b39c
+  publication_finalizer:
+    path: scripts/region_talk_publication_finalizer.py
+    blob_sha: 76e928989585d05d2de2291b36109fba6df78dde
+  candidate_worker:
+    path: kaggle/RegionTalkCandidateReport/region_talk_candidate_report.py
+    blob_sha: 7bc15d6175264cd3bfad242f4838c00bd2526394
+  bge_worker:
+    path: kaggle/RegionTalkBgeM3Enrichment/region_talk_bge_m3_enrichment.py
+    blob_sha: 0598777af0c91d9d716817666cfc45c81cda642c
+  image_worker:
+    path: kaggle/RegionTalkImageDiagnostic/region_talk_image_diagnostic.py
+    blob_sha: b03a038be6c3dd33b75262244a27b06285b003b9
+
+parity_sequence:
+  - exact_source_and_blob_verification
+  - non_mutating_production_preflight
+  - ydb_read_only_decision_plan
+  - one_safe_private_kaggle_worker_launch
+  - bounded_scheduled_tick_with_publication_disabled
+  - mechanical_source_import_into_this_repository
+  - removal_of_region_talk_runtime_from_events_bot_new
+  - optional_sqlite_cutover_as_a_separate_migration
