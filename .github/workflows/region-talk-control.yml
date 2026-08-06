@@ -1,97 +1,223 @@
-name: Region Talk control tick
+name: Region Talk YDB parity control
 
 on:
-  schedule:
-    - cron: '7,22,37,52 * * * *'
+  push:
+    branches:
+      - agent/restore-region-talk-ydb-parity-20260806
+    paths:
+      - '.github/workflows/region-talk-control.yml'
+      - 'scripts/legacy_region_talk_adapter.py'
+      - 'config/legacy-runtime-source.yml'
   workflow_dispatch:
     inputs:
       mode:
-        description: tick, health, analyze, research_import, pause, resume
+        description: preflight, plan, canary, scheduled
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+          - plan
+          - canary
+          - scheduled
+      preferred_action:
+        description: Safe private Kaggle worker for canary
         required: false
-        default: tick
-        type: string
-      target:
-        description: Optional committed path/run/candidate selector
+        default: launch_candidate_report
+        type: choice
+        options:
+          - launch_candidate_report
+          - launch_bge_m3
+          - launch_image_diagnostic
+      confirm_mutation:
+        description: Type RUN_REGION_TALK_YDB_PARITY for canary/scheduled
         required: false
         type: string
+  schedule:
+    - cron: '7,22,37,52 * * * *'
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
-  group: region-talk-orchestrator
+  group: region-talk-ydb-parity-control
   cancel-in-progress: false
 
 jobs:
   control:
-    if: ${{ vars.REGION_TALK_ORCHESTRATOR_ENABLED == '1' }}
+    if: ${{ github.event_name != 'schedule' || vars.REGION_TALK_ORCHESTRATOR_ENABLED == '1' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 120
     environment: region-talk-control
     env:
-      # Kaggle supports either the current access token or the existing legacy
-      # username/key pair. Do not require a new token when the proven key works.
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      REGION_TALK_YDB_ENDPOINT: ${{ vars.REGION_TALK_YDB_ENDPOINT }}
+      REGION_TALK_YDB_DATABASE: ${{ vars.REGION_TALK_YDB_DATABASE }}
+      REGION_TALK_YDB_EXPECTED_DATABASE: ${{ vars.REGION_TALK_YDB_EXPECTED_DATABASE || vars.REGION_TALK_YDB_DATABASE }}
+      REGION_TALK_YDB_SERVICE_ACCOUNT_KEY_JSON: ${{ secrets.REGION_TALK_YDB_SERVICE_ACCOUNT_KEY_JSON || secrets.YC_SA_ML_DEV_KEY }}
+
       KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
-      GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL }}
+      TELEGRAM_AUTH_BUNDLE_DISCOVERY1: ${{ secrets.TELEGRAM_AUTH_BUNDLE_DISCOVERY1 }}
+      TELEGRAM_AUTH_BUNDLE_DISCOVERY2: ${{ secrets.TELEGRAM_AUTH_BUNDLE_DISCOVERY2 }}
+      TG_API_ID: ${{ secrets.TG_API_ID || vars.TG_API_ID || secrets.TELEGRAM_API_ID || vars.TELEGRAM_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH || secrets.TELEGRAM_API_HASH }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      REGION_TALK_NOTIFY_TRANSPORT: telethon_discovery2
+      REGION_TALK_NOTIFY_CHAT_ID: ${{ vars.REGION_TALK_REVIEW_CHAT_ID || vars.REGION_TALK_NOTIFY_CHAT_ID }}
+      REGION_TALK_OPERATOR_REVIEWER_IDS: ${{ vars.REGION_TALK_OPERATOR_REVIEWER_IDS }}
+
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL || secrets.PERSONALIZATION_SUPABASE_URL || vars.PERSONALIZATION_SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY || secrets.SUPABASE_KEY || secrets.PERSONALIZATION_SUPABASE_SERVICE_KEY }}
+      GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL || vars.GOOGLE_AI_LIMITER_SUPABASE_URL }}
       GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GOOGLE_API_KEY2: ${{ secrets.GOOGLE_API_KEY2 || secrets.GOOGLE_API_KEY_2 }}
+      GOOGLE_API_KEY3: ${{ secrets.GOOGLE_API_KEY3 || secrets.GOOGLE_API_KEY_3 }}
+      GOOGLE_API_KEY4: ${{ secrets.GOOGLE_API_KEY4 || secrets.GOOGLE_API_KEY_4 }}
+      GOOGLE_API_KEY5: ${{ secrets.GOOGLE_API_KEY5 || secrets.GOOGLE_API_KEY_5 }}
+      GOOGLE_API_KEY6: ${{ secrets.GOOGLE_API_KEY6 || secrets.GOOGLE_API_KEY_6 }}
 
-      # Optional overrides. Empty values are derived from KAGGLE_USERNAME.
-      REGION_TALK_STATE_DATASET_OVERRIDE: ${{ vars.REGION_TALK_STATE_DATASET }}
-      REGION_TALK_RUN_HISTORY_DATASET_OVERRIDE: ${{ vars.REGION_TALK_RUN_HISTORY_DATASET }}
-
-      REGION_TALK_ORCHESTRATOR_ENABLED: '1'
-      REGION_TALK_MODE: ${{ inputs.mode || 'tick' }}
-      REGION_TALK_TARGET: ${{ inputs.target || '' }}
+      REGION_TALK_STATE_BACKEND: ydb
+      REGION_TALK_REQUIRE_YDB_STATE: '1'
+      REGION_TALK_YDB_REQUIRE_EXPECTED_DATABASE: '1'
+      REGION_TALK_YDB_READ_MODEL_MODE: required
+      REGION_TALK_YDB_ALLOW_LEGACY_BROAD_READ_FALLBACK: '0'
+      REGION_TALK_EXTERNAL_RESEARCH_ENABLED: '0'
+      REGION_TALK_TELEGRAM_PUBLISH_ENABLED: '0'
+      REGION_TALK_VK_PUBLISH_ENABLED: '0'
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out standalone control repository
+        uses: actions/checkout@v4
         with:
-          ref: main
+          persist-credentials: false
+
+      - name: Check out exact working Region Talk implementation
+        uses: actions/checkout@v4
+        with:
+          repository: onedayonemasterpiece/events-bot-new
+          ref: 5bbdb681623d5e4e0bff2133e487a6663c1a838a
+          path: legacy-src
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: legacy-src/requirements.txt
 
-      - name: Install exact checkout
-        run: python -m pip install --disable-pip-version-check -e .
+      - name: Resolve requested safety mode
+        id: request
+        shell: bash
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_CONFIRM: ${{ inputs.confirm_mutation }}
+          INPUT_PREFERRED_ACTION: ${{ inputs.preferred_action }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == 'schedule' ]]; then
+            mode='scheduled'
+            preferred='launch_candidate_report'
+          elif [[ "${GITHUB_EVENT_NAME}" == 'push' ]]; then
+            mode='preflight'
+            preferred='launch_candidate_report'
+          else
+            mode="${INPUT_MODE:-preflight}"
+            preferred="${INPUT_PREFERRED_ACTION:-launch_candidate_report}"
+          fi
 
-      - name: Derive and validate control configuration
+          case "$mode" in
+            preflight|plan) ;;
+            canary|scheduled)
+              if [[ "${GITHUB_EVENT_NAME}" != 'schedule' && "${INPUT_CONFIRM:-}" != 'RUN_REGION_TALK_YDB_PARITY' ]]; then
+                echo "Mode $mode requires exact confirmation RUN_REGION_TALK_YDB_PARITY" >&2
+                exit 2
+              fi
+              ;;
+            *)
+              echo "Unsupported mode: $mode" >&2
+              exit 2
+              ;;
+          esac
+
+          {
+            echo "mode=$mode"
+            echo "preferred_action=$preferred"
+          } >> "$GITHUB_OUTPUT"
+          echo "Selected mode: $mode"
+
+      - name: Install exact legacy runtime dependencies
         shell: bash
         run: |
           set -euo pipefail
-          : "${KAGGLE_USERNAME:?missing KAGGLE_USERNAME}"
-
-          if [[ -n "${KAGGLE_API_TOKEN:-}" ]]; then
-            auth_mode='access_token'
-          elif [[ -n "${KAGGLE_KEY:-}" ]]; then
-            auth_mode='legacy_key'
+          if [[ '${{ steps.request.outputs.mode }}' == 'preflight' ]]; then
+            python -m pip install --disable-pip-version-check \
+              'aiosqlite>=0.21.0' 'sqlalchemy>=2.0,<3'
           else
-            echo 'missing Kaggle authentication: set KAGGLE_API_TOKEN or KAGGLE_KEY' >&2
-            exit 1
+            python -m pip install --disable-pip-version-check \
+              -r legacy-src/requirements.txt
           fi
 
-          state_dataset="${REGION_TALK_STATE_DATASET_OVERRIDE:-${KAGGLE_USERNAME}/region-talk-state}"
-          run_history_dataset="${REGION_TALK_RUN_HISTORY_DATASET_OVERRIDE:-${KAGGLE_USERNAME}/region-talk-run-history}"
-
-          {
-            echo "REGION_TALK_STATE_DATASET=${state_dataset}"
-            echo "REGION_TALK_RUN_HISTORY_DATASET=${run_history_dataset}"
-            echo "REGION_TALK_KAGGLE_AUTH_MODE=${auth_mode}"
-          } >> "$GITHUB_ENV"
-
-          echo "Kaggle auth mode: ${auth_mode}"
-          echo "State dataset: ${state_dataset}"
-          echo "Run-history dataset: ${run_history_dataset}"
-
-      - name: Execute one bounded control tick
+      - name: Execute bounded parity mode
+        shell: bash
         run: |
-          echo 'Bootstrap workflow remains disabled until runtime phases and smoke gates are implemented.'
-          echo 'Do not replace this line with long polling.'
-          exit 1
+          set -euo pipefail
+          mkdir -p artifacts/legacy-region-talk
+          python scripts/legacy_region_talk_adapter.py \
+            --source-dir legacy-src \
+            --mode '${{ steps.request.outputs.mode }}' \
+            --preferred-action '${{ steps.request.outputs.preferred_action }}' \
+            --scheduler-run-id "github-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --limit 5000 \
+            --receipt artifacts/legacy-region-talk/receipt.json \
+            --log artifacts/legacy-region-talk/command.log
+
+      - name: Publish sanitized run summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('artifacts/legacy-region-talk/receipt.json')
+          if not path.is_file():
+              Path('.summary.md').write_text(
+                  '### Region Talk YDB parity\n\n- receipt: missing\n',
+                  encoding='utf-8',
+              )
+              raise SystemExit(0)
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          result = payload.get('result') or {}
+          with open('.summary.md', 'w', encoding='utf-8') as out:
+              out.write('### Region Talk YDB parity\n\n')
+              out.write(f"- mode: `{payload.get('mode')}`\n")
+              out.write(f"- source commit: `{(payload.get('source') or {}).get('commit')}`\n")
+              out.write(f"- result ok: `{str(bool(result.get('ok'))).lower()}`\n")
+              out.write(f"- status: `{result.get('status') or '-'}`\n")
+              out.write(f"- production publication enabled: `{str(bool(payload.get('production_publication_enabled'))).lower()}`\n")
+              missing = result.get('missing') or []
+              if missing:
+                  out.write(f"- missing configuration groups: `{len(missing)}`\n")
+                  for item in missing:
+                      out.write(f"  - `{item}`\n")
+              actions = result.get('actions') or (result.get('plan') or {}).get('actions') or []
+              if actions:
+                  out.write('- planned actions:\n')
+                  for item in actions:
+                      out.write(f"  - `{item.get('action')}` — {item.get('reason') or ''}\n")
+          PY
+          cat .summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: region-talk-ydb-parity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/legacy-region-talk/
+          if-no-files-found: warn
+          retention-days: 30
