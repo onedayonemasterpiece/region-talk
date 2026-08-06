@@ -1,104 +1,112 @@
 # Region Talk
 
-Автономный CPU-only контур поиска, проверки, редакционной подготовки, операторского согласования и публикации внешних материалов о Калининградской области.
+Автономный контур поиска, проверки, редакционной подготовки, операторского согласования и публикации внешних материалов о Калининградской области.
 
-> Текущий статус: private repository, bootstrap установлен, Kaggle legacy-auth подтверждён, repository validation проходит. Scheduler и publisher выключены. Runtime workers, YDB migration и первый полный pipeline run ещё не завершены.
+> **Фактический статус:** работавший YDB-backed Region Talk не был полностью перенесён из `events-bot-new`. В этом репозитории первоначально оказался новый SQLite/Kaggle bootstrap, а не production-equivalent runtime. Восстановление идёт через exact YDB parity: GitHub Actions заменяет только прежний APScheduler/Fly trigger и вызывает неизменённый рабочий commit `5bbdb681623d5e4e0bff2133e487a6663c1a838a`. Production publisher остаётся выключенным.
+
+Подробный диагноз и порядок восстановления: [`docs/ydb-parity-recovery.md`](docs/ydb-parity-recovery.md).
 
 ## Продуктовый результат
 
-Система должна непрерывно, пусть и не мгновенно:
+Region Talk полезен, когда регулярно доставляет оператору **новые, качественные и действительно публикуемые внешние взгляды на Калининградскую область**, а не просто создаёт технические очереди или зелёные workflow.
+
+Рабочий продуктовый контур должен:
 
 1. находить внешние русскоязычные публикации о Калининградской области;
-2. принимать вручную исследованные статьи через versioned JSON intake;
+2. принимать вручную исследованные статьи;
 3. обрабатывать текст отдельными CPU-контурами E5 и BGE-M3;
 4. проверять источник, региональность, содержательность, рекламу, новости, визуал и редакционную пригодность;
 5. готовить точную media-first ревизию публикации;
 6. отправлять её в закрытый Telegram review chat;
 7. связывать `👍/❤️`, `👎` и `✍` с точной ревизией текста и медиа;
 8. планировать только согласованные ревизии с учётом расписания, разнообразия и идемпотентности;
-9. публиковать в целевой Telegram-канал;
+9. публиковать в целевой Telegram-канал только после отдельного gate;
 10. сохранять историю для воспроизведения ошибок и измерения продуктовой эффективности.
 
-## Главные архитектурные решения
-
-- **Kaggle runtime:** не создаётся заново; переиспользуются доказанные lifecycle-механики Telegram Monitoring и CherryFlash из `events-bot-new`, закреплённые exact commit/blob SHA.
-- **Каноническое продуктовое состояние:** SQLite snapshot в private versioned Kaggle Dataset.
-- **Тяжёлое исполнение:** отдельные private Kaggle CPU kernels.
-- **E5 и BGE-M3:** разные kernels; одновременная загрузка в один production worker запрещена.
-- **Единственный коммиттер:** GitHub Actions reconciler; workers возвращают immutable deltas.
-- **Оркестрация:** короткий catch-up controller каждые 15 минут после принятия ручного полного run.
-- **Supabase:** в первой версии только существующий canonical Google AI limiter; новый Region Talk control-plane не обязателен.
-- **История:** полный диагностический run bundle каждой стадии забирается и архивируется GitHub Actions.
-- **YDB:** временный read-only источник миграции и rollback, затем выводится из рабочего цикла.
-- **Публикация:** outbox + exact revision fingerprint + повторная проверка реакций + idempotency key.
-- **Редакционный стиль:** спокойный культурный навигатор с редакционным теплом; факты и CTA не могут быть стилистически выдуманы.
-
-## Топология
+## Текущий recovery-контур
 
 ```text
-private GitHub repository
-  ├─ code / schemas / policies / research JSON
-  ├─ short controller + reconciler
-  └─ current compact reports
-                  │
-                  ▼
- proven events-bot Kaggle lifecycle adapter
- private inputs → ready/readback → kernel binding
- → heartbeat/status → output recovery → cleanup
-                  │
-                  ▼
-       private Kaggle CPU workers
- Candidate/E5 ──► BGE ──► Image ──► Profile
-                  │ immutable deltas + logs
-                  ▼
-        GitHub Actions reconciler
- base-version check → SQLite transaction → invariants
- → new private state dataset version
-                  │
-      ┌───────────┴──────────────┐
-      ▼                          ▼
-private Kaggle state       existing Supabase
-and run history            Google AI limiter only
-      │
-      ▼
-Telegram review chat → schedule → publisher
-      │
-      ▼
-@kalinigrad_visit
+GitHub Actions bounded control tick
+              │
+              ▼
+exact checkout events-bot-new@5bbdb681...
+              │
+              ▼
+working YDB orchestrator
+   ├─ Candidate/E5 Kaggle worker
+   ├─ BGE-M3 Kaggle worker
+   ├─ ImageDiagnostic Kaggle worker
+   ├─ finalizer / source profile
+   └─ operator review queue
+              │
+              ▼
+existing YDB product state
 ```
+
+Критические правила:
+
+- никакого нового аналога Region Talk до восстановления parity;
+- exact commit и blob SHA проверяются перед каждым запуском;
+- `preflight` не меняет YDB и не запускает Kaggle;
+- `plan` читает YDB, но не выполняет actions;
+- `canary` может запустить ровно один private Kaggle worker из allowlist;
+- регулярный `scheduled` mode закрыт `REGION_TALK_ORCHESTRATOR_ENABLED`;
+- Telegram/VK production publishing принудительно выключен в recovery workflow.
+
+## Целевая архитектура после parity
+
+Зафиксированная SQLite/Kaggle architecture остаётся возможным следующим этапом, но больше не считается предпосылкой запуска работавшего продукта:
+
+- каноническое продуктовое состояние — SQLite snapshot в private versioned Kaggle Dataset;
+- workers возвращают immutable deltas;
+- GitHub Actions reconciler применяет compare-and-set и проверяет invariants;
+- E5 и BGE-M3 работают в отдельных CPU kernels;
+- YDB становится read-only migration/rollback source только после доказанного shadow cutover;
+- publication outbox использует exact revision/media fingerprints и idempotency keys.
+
+Этот redesign должен проходить отдельные shadow comparisons с работающим YDB-контуром. Необъяснимое исчезновение кандидатов является cutover blocker.
 
 ## Репозиторная карта
 
-- `SETUP.md` — только реально внешние параметры.
-- `config/kaggle-runtime-source.yml` — pinned commit/blob SHA доказанного Kaggle runtime.
-- `docs/kaggle-runtime-reuse.md` — что именно переносится из Telegram Monitoring и CherryFlash и что остаётся Region Talk-specific.
-- `docs/architecture.md` — границы системы и потоки данных.
-- `docs/orchestrator.md` — state machine, cron и recovery.
-- `docs/state-history-observability.md` — SQLite, manifests, logs и retention.
-- `docs/supabase-boundary.md` — минимальная граница Supabase.
-- `docs/ydb-migration.md` — одноразовая миграция и сверка.
-- `docs/research-intake.md` — добавление исследований через JSON.
-- `docs/review-publishing.md` — review chat, реакции, очередь и publisher.
-- `docs/testing-debugging.md` — testing, fault injection и расследования.
-- `docs/product-metrics.md` — метрики готовых публикаций и funnel.
-- `docs/first-full-run.md` — обязательный разбор первого цикла.
-- `docs/security-and-secrets.md` — stage-scoped credentials и leak prevention.
-- `docs/editorial/` — редакционная политика и Writer contract.
-- `sql/sqlite/` — canonical operational schema.
-- `sql/supabase/` — optional future compact control projection.
-- `schemas/` — run/delta/log/research contracts.
+### Recovery/parity
 
-## Release gates
+- `config/legacy-runtime-source.yml` — exact source commit и blob SHA рабочего YDB runtime;
+- `scripts/legacy_region_talk_adapter.py` — provenance/safety adapter без повторной реализации продукта;
+- `.github/workflows/region-talk-control.yml` — preflight, plan, one-worker canary и bounded scheduled tick;
+- `docs/ydb-parity-recovery.md` — фактический диагноз и последовательность восстановления;
+- `tests/test_legacy_region_talk_adapter.py` — защита canary allowlist и sanitized receipts.
 
-До первого production-поста обязательны:
+### Целевая архитектура
 
-1. GitHub и Kaggle assets подтверждены private;
-2. secrets отсутствуют в outputs, logs, artifacts и state;
-3. YDB export и SQLite import совпадают по row counts и hashes;
-4. повтор delta даёт zero changes, stale-base delta блокируется;
-5. E5 и BGE проходят отдельные CPU smoke runs;
-6. полный run bundle скачан и разобран;
-7. review reactions доказаны на exact reviewer IDs;
-8. private test-channel publisher canary проходит media/idempotency gates;
-9. первый полный цикл разобран по product funnel;
-10. только затем публикуется один явно согласованный production canary.
+- `config/kaggle-runtime-source.yml` — pinned provenance общего Kaggle lifecycle;
+- `docs/architecture.md` — будущие границы системы и потоки данных;
+- `docs/orchestrator.md` — future state machine и recovery;
+- `docs/state-history-observability.md` — SQLite, manifests, logs и retention;
+- `docs/ydb-migration.md` — отдельный shadow/cutover план;
+- `docs/product-metrics.md` — outcome, funnel, quality, diversity и efficiency metrics;
+- `sql/sqlite/` — целевая canonical schema;
+- `schemas/` — будущие run/delta/log/research contracts.
+
+## Parity gates
+
+До включения регулярного GitHub scheduler:
+
+1. exact old source commit/blob verification проходит;
+2. production preflight не сообщает отсутствующих runtime settings;
+3. YDB read-only plan возвращает текущий продуктовый funnel и decision plan;
+4. один private Candidate/E5, BGE или Image canary запускается и даёт terminal output;
+5. изменения YDB после canary объяснимы и соответствуют старому контракту;
+6. один bounded scheduled tick завершается без duplicate launch и без публикации;
+7. product metrics показывают движение кандидатов или точную причину zero-yield;
+8. dependency-closed source tree и Region Talk tests механически перенесены в этот репозиторий;
+9. workflow переключён с cross-repository checkout на local code;
+10. Region Talk runtime удалён из `events-bot-new` после подтверждённого parity.
+
+## Publication gates
+
+Production publication остаётся отдельным этапом:
+
+1. review reactions доказаны на exact reviewer IDs и exact revision fingerprint;
+2. private test-channel canary проходит media/idempotency gates;
+3. queue/product metrics и причины отказов доступны оператору;
+4. только затем выполняется один явно согласованный production canary.
