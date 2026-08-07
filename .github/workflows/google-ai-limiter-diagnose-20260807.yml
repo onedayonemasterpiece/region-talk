@@ -1,0 +1,143 @@
+name: Google AI limiter production diagnosis 20260807
+
+on:
+  push:
+    branches:
+      - agent/google-ai-limiter-diagnose-20260807
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: region-talk-control
+    env:
+      GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL }}
+      GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      GOOGLE_AI_LIMITER_DATABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify configured credential classes without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GOOGLE_AI_LIMITER_SUPABASE_URL:?missing limiter URL}"
+          : "${GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY:?missing limiter service key}"
+          for name in \
+            SUPABASE_ACCESS_TOKEN \
+            SUPABASE_DB_PASSWORD \
+            SUPABASE_DATABASE_URL \
+            GOOGLE_AI_LIMITER_DATABASE_URL \
+            DATABASE_URL \
+            SUPABASE_PROJECT_REF \
+            SUPABASE_PROJECT_ID
+          do
+            if [ -n "${!name:-}" ]; then
+              echo "credential_present:${name}=true"
+            else
+              echo "credential_present:${name}=false"
+            fi
+          done
+
+      - name: Probe deployed limiter capabilities and deny response
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import json
+          import os
+          from urllib.parse import urlparse
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+
+          base = os.environ['GOOGLE_AI_LIMITER_SUPABASE_URL'].rstrip('/')
+          key = os.environ['GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY']
+          host = urlparse(base).hostname or ''
+          project_ref = host.split('.', 1)[0] if host else ''
+          print(f'limiter_project_ref={project_ref}')
+
+          headers = {
+              'apikey': key,
+              'Authorization': f'Bearer {key}',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Accept-Profile': 'public',
+              'Content-Profile': 'public',
+          }
+
+          def post_rpc(name: str, payload: dict) -> tuple[int, object]:
+              req = Request(
+                  f'{base}/rest/v1/rpc/{name}',
+                  data=json.dumps(payload).encode('utf-8'),
+                  headers=headers,
+                  method='POST',
+              )
+              try:
+                  with urlopen(req, timeout=20) as response:
+                      status = int(response.status)
+                      body = response.read().decode('utf-8', errors='replace')
+              except HTTPError as exc:
+                  status = int(exc.code)
+                  body = exc.read().decode('utf-8', errors='replace')
+              try:
+                  parsed = json.loads(body) if body else None
+              except Exception:
+                  parsed = {'unparsed_body_head': body[:240]}
+              return status, parsed
+
+          def row(value: object) -> dict:
+              if isinstance(value, list) and value and isinstance(value[0], dict):
+                  return value[0]
+              return value if isinstance(value, dict) else {}
+
+          cap_status, cap_payload = post_rpc('google_ai_limiter_capabilities', {})
+          cap = row(cap_payload)
+          print(json.dumps({
+              'probe': 'capabilities',
+              'http_status': cap_status,
+              'response_keys': sorted(cap),
+              'limiter_contract': cap.get('limiter_contract'),
+              'bucket_strategy': cap.get('bucket_strategy'),
+              'quota_scope_dimension': cap.get('quota_scope_dimension'),
+              'lock_dimension': cap.get('lock_dimension'),
+              'error_code': cap.get('code'),
+              'error_message_head': str(cap.get('message') or '')[:160],
+          }, ensure_ascii=False, sort_keys=True))
+
+          deny_status, deny_payload = post_rpc('google_ai_reserve', {
+              'p_request_uid': '00000000-0000-0000-0000-000000000007',
+              'p_attempt_no': 1,
+              'p_consumer': 'region_talk_contract_probe',
+              'p_account_name': None,
+              'p_model': 'gemini-3.5-flash-lite',
+              'p_reserved_tpm': 1,
+              'p_candidate_key_ids': ['00000000-0000-0000-0000-000000000000'],
+          })
+          deny = row(deny_payload)
+          print(json.dumps({
+              'probe': 'reserve_no_keys',
+              'http_status': deny_status,
+              'response_keys': sorted(deny),
+              'ok': deny.get('ok'),
+              'blocked_reason': deny.get('blocked_reason'),
+              'limiter_contract': deny.get('limiter_contract'),
+              'bucket_strategy': deny.get('bucket_strategy'),
+              'quota_scope_present': bool(deny.get('quota_scope')),
+              'limits_present': isinstance(deny.get('limits'), dict),
+              'used_after_present': isinstance(deny.get('used_after'), dict),
+              'error_code': deny.get('code'),
+              'error_message_head': str(deny.get('message') or '')[:160],
+          }, ensure_ascii=False, sort_keys=True))
+          PY
