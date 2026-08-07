@@ -1,0 +1,349 @@
+name: Google AI limiter production migration 20260807
+
+on:
+  push:
+    branches:
+      - agent/google-ai-limiter-migration-20260807
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: google-ai-limiter-production-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: region-talk-migration
+    env:
+      REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING: ${{ secrets.REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING }}
+      GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL }}
+      GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY }}
+    steps:
+      - name: Check out exact migration source
+        uses: actions/checkout@v4
+        with:
+          repository: onedayonemasterpiece/events-bot-new
+          ref: 5bbdb681623d5e4e0bff2133e487a6663c1a838a
+          path: donor
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+
+      - name: Verify migration target and prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING:?missing REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}"
+          : "${GOOGLE_AI_LIMITER_SUPABASE_URL:?missing limiter URL}"
+          : "${GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY:?missing limiter service key}"
+          echo "::add-mask::${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}"
+          echo "::add-mask::${GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY}"
+          mkdir -p evidence
+
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          limiter = urlparse(os.environ['GOOGLE_AI_LIMITER_SUPABASE_URL'])
+          expected_ref = (limiter.hostname or '').split('.', 1)[0]
+          dsn = os.environ['REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING']
+          if not expected_ref or expected_ref not in dsn:
+              raise SystemExit('migration target mismatch: direct DSN is not the limiter project')
+          print(f'target_project_ref={expected_ref}')
+          PY
+
+          missing="$({
+            psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" -X -A -t -v ON_ERROR_STOP=1 <<'SQL'
+          WITH required(table_name, column_name) AS (
+            VALUES
+              ('google_ai_api_keys', 'quota_scope'),
+              ('google_ai_requests', 'quota_scope'),
+              ('google_ai_requests', 'minute_bucket'),
+              ('google_ai_requests', 'day_bucket'),
+              ('google_ai_request_attempts', 'quota_scope'),
+              ('google_ai_request_attempts', 'started_at'),
+              ('google_ai_request_attempts', 'minute_bucket'),
+              ('google_ai_request_attempts', 'day_bucket'),
+              ('google_ai_request_attempts', 'reserved_tpm')
+          )
+          SELECT COALESCE(string_agg(r.table_name || '.' || r.column_name, ',' ORDER BY 1), '')
+          FROM required r
+          LEFT JOIN information_schema.columns c
+            ON c.table_schema = 'public'
+           AND c.table_name = r.table_name
+           AND c.column_name = r.column_name
+          WHERE c.column_name IS NULL;
+          SQL
+          } | tr -d '\r\n')"
+          if [ -n "${missing}" ]; then
+            echo "missing prerequisite columns: ${missing}" >&2
+            exit 1
+          fi
+
+          psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" -X -A -t -v ON_ERROR_STOP=1 <<'SQL' > evidence/preflight.txt
+          SELECT 'database=' || current_database();
+          SELECT 'reserve=' || COALESCE(to_regprocedure('public.google_ai_reserve(uuid,integer,text,text,text,integer,uuid[])')::text, 'missing');
+          SELECT 'capabilities=' || COALESCE(to_regprocedure('public.google_ai_limiter_capabilities()')::text, 'missing');
+          SELECT 'provider_cooldowns=' || COALESCE(to_regclass('public.google_ai_provider_cooldowns')::text, 'missing');
+          SELECT 'active_keys=' || COUNT(*)::text FROM public.google_ai_api_keys WHERE is_active;
+          SELECT 'target_key_rows=' || COUNT(*)::text FROM public.google_ai_api_keys WHERE is_active AND env_var_name = 'GOOGLE_API_KEY3';
+          SELECT 'target_model_rows=' || COUNT(*)::text FROM public.google_ai_model_limits WHERE model = 'gemini-3.5-flash-lite';
+          SELECT 'migration_recorded=' || CASE WHEN to_regclass('supabase_migrations.schema_migrations') IS NULL THEN 'history_missing' ELSE 'history_present' END;
+          SQL
+
+          psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" -X -A -t -v ON_ERROR_STOP=1 \
+            -c "SELECT pg_get_functiondef('public.google_ai_reserve(uuid,integer,text,text,text,integer,uuid[])'::regprocedure);" \
+            > evidence/pre-migration-google-ai-reserve.sql
+
+      - name: Apply rolling-window and Pacific-day limiter migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" \
+            -X -v ON_ERROR_STOP=1 \
+            -f donor/supabase/migrations/20260803074500_google_ai_rolling_windows_pacific_rpd.sql \
+            > evidence/migration-apply.log
+
+      - name: Record applied migration when Supabase history is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" -X -v ON_ERROR_STOP=1 <<'SQL' > evidence/migration-history.log
+          DO $block$
+          DECLARE
+              has_version BOOLEAN;
+              has_name BOOLEAN;
+              has_statements BOOLEAN;
+          BEGIN
+              IF to_regclass('supabase_migrations.schema_migrations') IS NULL THEN
+                  RAISE NOTICE 'schema_migrations table absent; receipt remains in GitHub evidence';
+                  RETURN;
+              END IF;
+
+              SELECT EXISTS (
+                  SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='supabase_migrations' AND table_name='schema_migrations' AND column_name='version'
+              ) INTO has_version;
+              SELECT EXISTS (
+                  SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='supabase_migrations' AND table_name='schema_migrations' AND column_name='name'
+              ) INTO has_name;
+              SELECT EXISTS (
+                  SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='supabase_migrations' AND table_name='schema_migrations' AND column_name='statements'
+              ) INTO has_statements;
+
+              IF NOT has_version THEN
+                  RAISE EXCEPTION 'schema_migrations exists without version column';
+              ELSIF has_name AND has_statements THEN
+                  EXECUTE $sql$
+                      INSERT INTO supabase_migrations.schema_migrations(version, name, statements)
+                      VALUES ($1, $2, ARRAY[$3]::text[])
+                      ON CONFLICT (version) DO NOTHING
+                  $sql$ USING
+                      '20260803074500',
+                      'google_ai_rolling_windows_pacific_rpd',
+                      'Applied from events-bot-new@5bbdb681623d5e4e0bff2133e487a6663c1a838a by GitHub Actions run ' || current_setting('application_name', true);
+              ELSIF has_name THEN
+                  EXECUTE $sql$
+                      INSERT INTO supabase_migrations.schema_migrations(version, name)
+                      VALUES ($1, $2)
+                      ON CONFLICT (version) DO NOTHING
+                  $sql$ USING '20260803074500', 'google_ai_rolling_windows_pacific_rpd';
+              ELSE
+                  EXECUTE $sql$
+                      INSERT INTO supabase_migrations.schema_migrations(version)
+                      VALUES ($1)
+                      ON CONFLICT (version) DO NOTHING
+                  $sql$ USING '20260803074500';
+              END IF;
+          END
+          $block$;
+          SQL
+
+      - name: Verify database contract transactionally
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" -X -A -t -v ON_ERROR_STOP=1 <<'SQL' > evidence/post-migration.txt
+          SELECT 'capabilities=' || public.google_ai_limiter_capabilities()::text;
+          SELECT 'provider_cooldowns=' || to_regclass('public.google_ai_provider_cooldowns')::text;
+          SELECT 'migration_history=' || COALESCE((
+              SELECT version FROM supabase_migrations.schema_migrations WHERE version='20260803074500' LIMIT 1
+          ), 'not_recorded')
+          WHERE to_regclass('supabase_migrations.schema_migrations') IS NOT NULL;
+          SQL
+
+          psql "${REGION_TALK_SUPABASE_DIRECT_CONNECTION_STRING}" -X -A -t -v ON_ERROR_STOP=1 <<'SQL' > evidence/transactional-reserve-smoke.txt
+          BEGIN;
+          SELECT public.google_ai_reserve(
+              gen_random_uuid(),
+              1,
+              'region_talk_migration_smoke',
+              NULL,
+              'gemini-3.5-flash-lite',
+              1,
+              ARRAY(
+                  SELECT id
+                  FROM public.google_ai_api_keys
+                  WHERE is_active AND env_var_name='GOOGLE_API_KEY3'
+                  ORDER BY priority, id
+                  LIMIT 1
+              )
+          )::text;
+          ROLLBACK;
+          SQL
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected_contract = 'google_ai_project_model_atomic_v1'
+          expected_strategy = 'rolling_60s_pacific_day_v2'
+
+          post = Path('evidence/post-migration.txt').read_text(encoding='utf-8')
+          cap_line = next((line for line in post.splitlines() if line.startswith('capabilities=')), '')
+          if not cap_line:
+              raise SystemExit('capabilities response missing')
+          capabilities = json.loads(cap_line.split('=', 1)[1])
+          if capabilities.get('limiter_contract') != expected_contract:
+              raise SystemExit(f'wrong limiter contract: {capabilities}')
+
+          smoke_lines = Path('evidence/transactional-reserve-smoke.txt').read_text(encoding='utf-8').splitlines()
+          payload = next((json.loads(line) for line in smoke_lines if line.strip().startswith('{')), None)
+          if not isinstance(payload, dict):
+              raise SystemExit('transactional reserve response missing')
+          required = {
+              'ok': True,
+              'limiter_contract': expected_contract,
+              'bucket_strategy': expected_strategy,
+          }
+          for key, value in required.items():
+              if payload.get(key) != value:
+                  raise SystemExit(f'reserve smoke mismatch for {key}: {payload}')
+          if not payload.get('quota_scope'):
+              raise SystemExit(f'reserve smoke missing quota_scope: {payload}')
+
+          receipt = {
+              'schema_version': 'google-ai-limiter-migration-receipt-v1',
+              'migration': '20260803074500_google_ai_rolling_windows_pacific_rpd.sql',
+              'source_commit': '5bbdb681623d5e4e0bff2133e487a6663c1a838a',
+              'limiter_contract': payload.get('limiter_contract'),
+              'bucket_strategy': payload.get('bucket_strategy'),
+              'quota_scope_present': bool(payload.get('quota_scope')),
+              'transactional_reserve_ok': payload.get('ok') is True,
+              'provider_cooldown_table_present': 'provider_cooldowns=google_ai_provider_cooldowns' in post,
+          }
+          Path('evidence/migration-receipt.json').write_text(
+              json.dumps(receipt, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(receipt, ensure_ascii=False, indent=2))
+          print('MIGRATION_RESULT=PASS')
+          PY
+
+      - name: Verify deployed PostgREST schema cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import json
+          import os
+          import time
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          base = os.environ['GOOGLE_AI_LIMITER_SUPABASE_URL'].rstrip('/')
+          key = os.environ['GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY']
+          headers = {
+              'apikey': key,
+              'Authorization': f'Bearer {key}',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Accept-Profile': 'public',
+              'Content-Profile': 'public',
+          }
+
+          def rpc(name: str, body: dict) -> tuple[int, object]:
+              request = Request(
+                  f'{base}/rest/v1/rpc/{name}',
+                  data=json.dumps(body).encode('utf-8'),
+                  headers=headers,
+                  method='POST',
+              )
+              try:
+                  with urlopen(request, timeout=20) as response:
+                      raw = response.read().decode('utf-8', errors='replace')
+                      return int(response.status), json.loads(raw) if raw else None
+              except HTTPError as exc:
+                  raw = exc.read().decode('utf-8', errors='replace')
+                  try:
+                      payload = json.loads(raw)
+                  except Exception:
+                      payload = {'raw_head': raw[:200]}
+                  return int(exc.code), payload
+
+          expected_contract = 'google_ai_project_model_atomic_v1'
+          expected_strategy = 'rolling_60s_pacific_day_v2'
+          observed = None
+          for attempt in range(12):
+              status, payload = rpc('google_ai_limiter_capabilities', {})
+              row = payload[0] if isinstance(payload, list) and payload else payload
+              if status == 200 and isinstance(row, dict) and row.get('limiter_contract') == expected_contract:
+                  observed = row
+                  break
+              time.sleep(5)
+          if observed is None:
+              raise SystemExit('PostgREST did not expose the new limiter capabilities')
+
+          status, payload = rpc('google_ai_reserve', {
+              'p_request_uid': '00000000-0000-0000-0000-000000000807',
+              'p_attempt_no': 1,
+              'p_consumer': 'region_talk_postgrest_contract_probe',
+              'p_account_name': None,
+              'p_model': 'gemini-3.5-flash-lite',
+              'p_reserved_tpm': 1,
+              'p_candidate_key_ids': ['00000000-0000-0000-0000-000000000000'],
+          })
+          row = payload[0] if isinstance(payload, list) and payload else payload
+          if status != 200 or not isinstance(row, dict):
+              raise SystemExit(f'PostgREST reserve probe failed: {status} {row}')
+          if row.get('limiter_contract') != expected_contract or row.get('bucket_strategy') != expected_strategy:
+              raise SystemExit(f'PostgREST reserve contract stale: {row}')
+
+          receipt = {
+              'http_status': status,
+              'capabilities': observed,
+              'deny_branch': {
+                  'ok': row.get('ok'),
+                  'blocked_reason': row.get('blocked_reason'),
+                  'limiter_contract': row.get('limiter_contract'),
+                  'bucket_strategy': row.get('bucket_strategy'),
+              },
+          }
+          with open('evidence/postgrest-verification.json', 'w', encoding='utf-8') as handle:
+              json.dump(receipt, handle, ensure_ascii=False, indent=2)
+              handle.write('\n')
+          print(json.dumps(receipt, ensure_ascii=False, indent=2))
+          print('POSTGREST_RESULT=PASS')
+          PY
+
+      - name: Upload migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-ai-limiter-migration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 30
