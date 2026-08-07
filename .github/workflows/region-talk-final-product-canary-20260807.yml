@@ -1,0 +1,307 @@
+name: Region Talk final product canary 20260807
+
+on:
+  push:
+    branches:
+      - agent/region-talk-product-final-20260807
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: region-talk-final-product-canary-20260807
+  cancel-in-progress: false
+
+jobs:
+  product-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
+      TELEGRAM_AUTH_BUNDLE_DISCOVERY1: ${{ secrets.TELEGRAM_AUTH_BUNDLE_DISCOVERY1 }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GOOGLE_API_KEY3: ${{ secrets.GOOGLE_API_KEY3 }}
+      GOOGLE_AI_LIMITER_SUPABASE_URL: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_URL }}
+      GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY: ${{ secrets.GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SUPABASE_SCHEMA: ${{ vars.REGION_TALK_SUPABASE_SCHEMA }}
+      VK_ACCESS_TOKEN: ${{ secrets.VK_ACCESS_TOKEN }}
+      VK_SERVICE_TOKEN: ${{ secrets.VK_SERVICE_TOKEN }}
+
+      REGION_TALK_AUTH_BUNDLE_ENV: TELEGRAM_AUTH_BUNDLE_DISCOVERY1
+      REGION_TALK_STATE_BACKEND: json
+      REGION_TALK_REQUIRE_YDB_STATE: "0"
+      REGION_TALK_YDB_BUSINESS_HEARTBEAT: "0"
+      REGION_TALK_YDB_ONLINE_SOURCE_WRITES: "0"
+      REGION_TALK_YDB_ONLINE_QUEUE_WRITE_MAX_ROWS: "0"
+      REGION_TALK_YDB_ONLINE_CANDIDATE_WRITE_MAX_ROWS: "0"
+      REGION_TALK_EXTERNAL_BLOGGER_EVIDENCE_ENABLED: "0"
+      REGION_TALK_EXTERNAL_BGE_M3_FUSION_ENABLED: "0"
+      REGION_TALK_REQUIRE_EXTERNAL_BGE_M3_FOR_IMAGE_QUEUE: "0"
+
+      REGION_TALK_IMAGE_SCORING_MODE: clip
+      REGION_TALK_DOWNLOAD_MEDIA_FOR_SCORING: "1"
+      REGION_TALK_CANDIDATE_REPORT_ALLOW_IMAGE_MODEL_SCORING: "1"
+      REGION_TALK_ACTUAL_IMAGE_TARGET: "5"
+      REGION_TALK_TG_MAX_MEDIA_DOWNLOADS_PER_RUN: "40"
+      REGION_TALK_MAX_VLM_CALLS: "0"
+
+      REGION_TALK_ENABLE_FINAL_LLM_VERIFIER: "1"
+      REGION_TALK_TARGET_LLM_CALLS: "8"
+      REGION_TALK_MAX_LLM_FINAL_VERIFY: "8"
+      REGION_TALK_SOURCE_PROFILE_BUILD_ENABLED: "1"
+      REGION_TALK_SOURCE_PROFILE_HEARTBEAT_EVERY_ROWS: "10"
+      REGION_TALK_LIGHTWEIGHT_REPORT: "1"
+      REGION_TALK_WRITE_REPORT_ARTIFACTS: "1"
+      REGION_TALK_SKIP_REPORT_TAIL_AFTER_SOURCE_QUEUE_HANDOFF: "0"
+
+      REGION_TALK_TG_SIMILAR_ENABLED: "0"
+      REGION_TALK_MAX_SIMILAR_SEEDS_PER_RUN: "0"
+      REGION_TALK_ENABLE_TELEGRAM_KEYWORD_DISCOVERY: "1"
+      REGION_TALK_MAX_TELEGRAM_KEYWORD_QUERIES: "6"
+      REGION_TALK_TELEGRAM_KEYWORD_RESULTS_PER_QUERY: "8"
+      REGION_TALK_FAST_CHECK_KO_ENABLED: "0"
+      REGION_TALK_VK_CONFIRMED_BLOGGER_SEARCH_ENABLED: "0"
+      REGION_TALK_FETCH_VKVIDEO_WALL_FALLBACK: "0"
+
+      REGION_TALK_NOTEBOOK_MAX_RUNTIME_SECONDS: "1500"
+      REGION_TALK_RUNTIME_RESERVE_BEFORE_REPORT_SECONDS: "150"
+      REGION_TALK_RUNTIME_RESERVE_BEFORE_LLM_SECONDS: "100"
+      REGION_TALK_RUNTIME_RESERVE_BEFORE_FAST_CHECK_KO_SECONDS: "180"
+      REGION_TALK_RUNTIME_RESERVE_BEFORE_DISCOVERY_TAIL_SECONDS: "180"
+      REGION_TALK_RUNTIME_RESERVE_BEFORE_KEYWORD_QUERY_SECONDS: "180"
+      REGION_TALK_RUNTIME_RESERVE_DURING_TEXT_EMBEDDING_SECONDS: "90"
+      REGION_TALK_TEXT_EMBEDDING_MODEL_TIMEOUT_SECONDS: "480"
+
+      REGION_TALK_TG_MAX_TOTAL_REQUESTS_PER_RUN: "650"
+      REGION_TALK_TG_MAX_NETWORK_RESOLVES_PER_RUN: "30"
+      REGION_TALK_TG_MAX_HISTORY_SOURCES_PER_RUN: "24"
+      REGION_TALK_HISTORY_SOURCES_TARGET: "24"
+      REGION_TALK_TG_MAX_HISTORY_POSTS_PER_SOURCE: "24"
+      REGION_TALK_MAX_POSTS_PER_SOURCE: "24"
+      REGION_TALK_TG_MAX_RECOMMENDATION_CALLS_PER_RUN: "0"
+      REGION_TALK_TG_RESOLVE_DELAY_MIN_SECONDS: "2"
+      REGION_TALK_TG_RESOLVE_DELAY_MAX_SECONDS: "4"
+      REGION_TALK_TG_HISTORY_QUERY_DELAY_MIN_SECONDS: "1"
+      REGION_TALK_TG_HISTORY_QUERY_DELAY_MAX_SECONDS: "2"
+      REGION_TALK_TG_MEDIA_DELAY_MIN_SECONDS: "0.5"
+      REGION_TALK_TG_MEDIA_DELAY_MAX_SECONDS: "1.2"
+      REGION_TALK_TG_SOURCE_PAUSE_MIN_SECONDS: "1"
+      REGION_TALK_TG_SOURCE_PAUSE_MAX_SECONDS: "2"
+      REGION_TALK_MIN_POST_DATE: "2025-08-07T00:00:00+00:00"
+      REGION_TALK_ALLOW_UNVERIFIED_KAGGLE_SLOT: "0"
+      REGION_TALK_ALLOW_ACTIVE_KAGGLE_OVERWRITE: "0"
+      REGION_TALK_KAGGLE_OUTPUT_FILE_PATTERN: '(^|/)(candidates-latest\.xlsx|output\.json|stage_status\.json|run_events\.jsonl|candidate_found\.jsonl|telegram-request-ledger\.jsonl|region-talk-state\.json|region_talk_run_events_live\.jsonl|region-talk-candidate-report\.log|[^/]+\.(xlsx|json|jsonl|md|html|log|csv))$'
+
+    steps:
+      - name: Check out exact Region Talk product corpus
+        uses: actions/checkout@v4
+        with:
+          repository: onedayonemasterpiece/events-bot-new
+          ref: 5bbdb681623d5e4e0bff2133e487a6663c1a838a
+          path: donor
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify live-run credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${KAGGLE_USERNAME:?missing KAGGLE_USERNAME}"
+          : "${KAGGLE_KEY:?missing KAGGLE_KEY}"
+          : "${TG_API_ID:?missing TG_API_ID}"
+          : "${TG_API_HASH:?missing TG_API_HASH}"
+          : "${TELEGRAM_AUTH_BUNDLE_DISCOVERY1:?missing TELEGRAM_AUTH_BUNDLE_DISCOVERY1}"
+          : "${GOOGLE_API_KEY3:?missing GOOGLE_API_KEY3}"
+          echo "::add-mask::${KAGGLE_KEY}"
+          echo "::add-mask::${TG_API_HASH}"
+          echo "::add-mask::${TELEGRAM_AUTH_BUNDLE_DISCOVERY1}"
+          echo "::add-mask::${GOOGLE_API_KEY3}"
+
+      - name: Install launch dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          'kaggle==2.2.4' 'cryptography>=41' 'requests>=2.31'
+
+      - name: Launch and wait for full live Kaggle product run
+        working-directory: donor
+        env:
+          REGION_TALK_RUN_ID: rt-final-${{ github.run_id }}
+        run: >-
+          python kaggle/execute_region_talk_candidate_report.py
+          --run-id "${REGION_TALK_RUN_ID}"
+          --max-sources 24
+          --timeout-minutes 43
+          --poll-interval-seconds 15
+
+      - name: Validate final product outcome and write receipt
+        if: always()
+        working-directory: donor
+        env:
+          REGION_TALK_RUN_ID: rt-final-${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import json
+          import os
+          from pathlib import Path
+
+          run_id = os.environ['REGION_TALK_RUN_ID']
+          root = Path('artifacts/codex/kaggle/region-talk-candidate-report') / run_id
+          evidence = Path('../evidence')
+          evidence.mkdir(parents=True, exist_ok=True)
+
+          payload = None
+          output_path = None
+          for path in sorted(root.rglob('output.json')) if root.exists() else []:
+              try:
+                  row = json.loads(path.read_text(encoding='utf-8'))
+              except Exception:
+                  continue
+              observed = str(row.get('run_id') or row.get('summary', {}).get('run_id') or '')
+              if observed == run_id:
+                  payload = row
+                  output_path = path
+                  break
+
+          summary = dict((payload or {}).get('summary') or {})
+          report_payload = None
+          report_path = None
+          for path in sorted(root.glob('region-talk-candidates-*.json')) if root.exists() else []:
+              try:
+                  row = json.loads(path.read_text(encoding='utf-8'))
+              except Exception:
+                  continue
+              if str(row.get('run_id') or row.get('summary', {}).get('run_id') or '') == run_id:
+                  report_payload = row
+                  report_path = path
+                  break
+
+          sheets = dict((report_payload or {}).get('sheets') or {})
+          final_rows = [
+              row for row in (
+                  list(sheets.get('04a_current_run_shortlist') or [])
+                  + list(sheets.get('04a_final_shortlist') or [])
+                  + list(sheets.get('04p_publication_queue') or [])
+              )
+              if isinstance(row, dict) and not row.get('_sheet_note')
+          ]
+          unique_final = {}
+          for row in final_rows:
+              key = str(row.get('post_url') or row.get('candidate_memory_id') or row.get('post_id') or len(unique_final))
+              unique_final[key] = row
+          final_rows = list(unique_final.values())
+
+          event_rows = []
+          for path in sorted(root.rglob('region_talk_run_events_live.jsonl')) if root.exists() else []:
+              for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+                  try:
+                      row = json.loads(line)
+                  except Exception:
+                      continue
+                  if str(row.get('run_id') or '') == run_id:
+                      event_rows.append(row)
+          profile_done = next((row for row in reversed(event_rows) if row.get('event_name') == 'source_profile_build_done'), None)
+          profile_started = next((row for row in reversed(event_rows) if row.get('event_name') == 'source_profile_build_started'), None)
+
+          posts_fetched = int(summary.get('posts_fetched') or 0)
+          sources_scanned = int(summary.get('source_count_scanned') or summary.get('source_count_attempted') or 0)
+          actual_images = int(summary.get('actual_image_scored_before_llm_count') or 0)
+          llm_ok = int(summary.get('llm_calls_ok') or 0)
+          final_signal = max(
+              len(final_rows),
+              int(summary.get('current_run_reviewable_candidates') or 0),
+              int(summary.get('candidates_created') or 0),
+              int(summary.get('final_candidates') or 0),
+              int(summary.get('publication_candidate_rows') or summary.get('publication_queue_rows') or 0),
+          )
+          state_backend = str(summary.get('state_backend') or '')
+          pipeline_ok = bool(payload) and posts_fetched > 0 and sources_scanned > 0 and state_backend == 'json'
+          product_ok = pipeline_ok and actual_images > 0 and llm_ok > 0 and final_signal > 0
+
+          compact_final = []
+          for row in final_rows[:20]:
+              compact_final.append({
+                  key: row.get(key)
+                  for key in (
+                      'rank', 'status_badge', 'source_title', 'source_url', 'post_url', 'post_date',
+                      'current_stage', 'candidate_score', 'overall_media_score', 'matched_place_names',
+                      'short_summary', 'why_selected', 'llm_decision', 'llm_reason', 'source_overview'
+                  )
+                  if row.get(key) not in (None, '')
+              })
+
+          receipt = {
+              'schema_version': 'region-talk-final-product-receipt-v1',
+              'run_id': run_id,
+              'pipeline_ok': pipeline_ok,
+              'product_ok': product_ok,
+              'terminal_status': str((payload or {}).get('status') or summary.get('status') or ''),
+              'output_path': str(output_path or ''),
+              'report_path': str(report_path or ''),
+              'posts_fetched': posts_fetched,
+              'sources_scanned': sources_scanned,
+              'sources_attempted': int(summary.get('source_count_attempted') or 0),
+              'sources_ok': int(summary.get('source_count_ok') or 0),
+              'fresh_posts': int(summary.get('fresh_posts') or 0),
+              'fresh_posts_with_place_evidence': int(summary.get('fresh_posts_with_place_evidence') or 0),
+              'posts_region_relevant': int(summary.get('posts_region_relevant') or 0),
+              'actual_image_scored_before_llm_count': actual_images,
+              'image_model_calls': int(summary.get('image_model_calls') or 0),
+              'llm_calls_attempted': int(summary.get('llm_calls_attempted') or 0),
+              'llm_calls_ok': llm_ok,
+              'llm_calls_error': int(summary.get('llm_calls_error') or 0),
+              'llm_accepted': int(summary.get('llm_accepted') or 0),
+              'pre_candidates_created': int(summary.get('pre_candidates_created') or 0),
+              'candidates_created': int(summary.get('candidates_created') or 0),
+              'current_run_reviewable_candidates': int(summary.get('current_run_reviewable_candidates') or 0),
+              'final_candidates': int(summary.get('final_candidates') or 0),
+              'publication_queue_rows': int(summary.get('publication_candidate_rows') or summary.get('publication_queue_rows') or 0),
+              'final_candidate_signal': final_signal,
+              'final_candidate_rows': compact_final,
+              'source_profile_build_started': bool(profile_started),
+              'source_profile_build_completed': bool(profile_done),
+              'source_profile_rows': int((profile_done or {}).get('source_rows_done') or 0),
+              'state_backend': state_backend,
+              'state_write_status': summary.get('state_write_status'),
+              'telegram_phase_status': summary.get('telegram_phase_status'),
+              'errors_count': int(summary.get('errors_count') or 0),
+              'xlsx_files': [str(path) for path in sorted(root.rglob('*.xlsx'))] if root.exists() else [],
+          }
+          (evidence / 'product-receipt.json').write_text(
+              json.dumps(receipt, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(receipt, ensure_ascii=False, indent=2))
+          if not product_ok:
+              raise SystemExit('PRODUCT_RESULT=FAIL')
+          print('PRODUCT_RESULT=PASS')
+          PY
+
+      - name: Collect raw product evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/raw
+          source_dir="donor/artifacts/codex/kaggle/region-talk-candidate-report/rt-final-${GITHUB_RUN_ID}"
+          if [ -d "${source_dir}" ]; then
+            cp -a "${source_dir}/." evidence/raw/
+          fi
+
+      - name: Upload receipt and candidate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: region-talk-final-product-${{ github.run_id }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 30
