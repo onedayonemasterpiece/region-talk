@@ -1,0 +1,40 @@
+name: Probe cross-project access for requested digest update
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ops-probe-cross-project-access-20260807.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [none, region-talk-control, region-talk-migration, region-talk-production-publish]
+    environment: ${{ matrix.environment != 'none' && matrix.environment || null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_ACCESS_TOKEN: ${{ secrets.FLY_ACCESS_TOKEN }}
+      FLY_SSH_TOKEN: ${{ secrets.FLY_SSH_TOKEN }}
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+      TELEGRAM_AUTH_BUNDLE_E2E: ${{ secrets.TELEGRAM_AUTH_BUNDLE_E2E }}
+      TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
+      TG_SESSION: ${{ secrets.TG_SESSION }}
+    steps:
+      - name: Print presence only
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SCOPE=${{ matrix.environment }}"
+          for name in FLY_API_TOKEN FLY_ACCESS_TOKEN FLY_SSH_TOKEN TG_API_ID TG_API_HASH TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_AUTH_BUNDLE_E2E TELEGRAM_SESSION TG_SESSION; do
+            [[ -n "${!name:-}" ]] && echo "PRESENT=${name}" || echo "ABSENT=${name}"
+          done
